@@ -1,0 +1,247 @@
+using FreeType
+
+rootType(::Type{Ref{T}}) where T = T
+
+Base.fieldnames(::Type{FT_Face}) = Base.fieldnames(FT_FaceRec)
+Base.fieldnames(::Type{FT_GlyphSlot}) = Base.fieldnames(FT_GlyphSlotRec)
+
+Base.getproperty(fo::FT_Face, sym::Symbol) = 
+    Base.getproperty(fo |> unsafe_load, sym)
+Base.getproperty(fo::FT_GlyphSlot, sym::Symbol) = 
+    Base.getproperty(fo |> unsafe_load, sym)
+
+
+mutable struct Glyph
+    index::FT_UInt
+    bufferIndex::Int32
+    curveCount::Int32
+    width::FT_Pos
+    height::FT_Pos
+    bearingX::FT_Pos
+    bearingY::FT_Pos
+    advance::FT_Pos
+end
+
+mutable struct BufferGlyph
+    start::UInt32
+    count::UInt32
+end
+
+struct BufferCurve
+    x0::Float32
+    y0::Float32
+    x1::Float32
+    y1::Float32
+    x2::Float32
+    y2::Float32
+end
+
+struct BufferVertex
+    x::Float32
+    y::Float32
+    u::Float32
+    v::Float32
+    bufferIndex::Int32
+end
+
+bufferCurves = BufferCurve[]
+bufferGlyphs = BufferGlyph[]
+glyphs = Dict()
+
+function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
+    # bufferCurves = BufferCurve[]
+    faceRec = face |> unsafe_load
+    bufferGlyph = BufferGlyph(0, 0)
+    bufferGlyph.start = (curves |> length)
+
+    start = 1
+
+    glyph = faceRec.glyph |> unsafe_load
+
+    nContours = glyph.outline.n_contours
+    contours = unsafe_wrap(Array, glyph.outline.contours, nContours)
+
+    for contourIdx in 1:nContours
+        convertContour(curves, glyph.outline, start, contours[contourIdx])
+        start = contours[contourIdx] + 1
+        @info start
+    end
+
+    bufferGlyph.count = (curves |> length) - bufferGlyph.start
+    bufferIdx = bufferGlyphs |> length
+    push!(bufferGlyphs, bufferGlyph)
+
+    glyph = Glyph(
+        glyphIdx,
+        bufferIdx,
+        bufferGlyph.count,
+        glyph.metrics.width,
+        glyph.metrics.height,
+        glyph.metrics.horiBearingX,
+        glyph.metrics.horiBearingY,
+        glyph.metrics.horiAdvance,
+    )
+    glyphs[charCode] = glyph
+end
+
+
+function convertContour(bufferCurves, outline, firstIdx, lastIdx)
+    if firstIdx == lastIdx
+        return 
+    end
+    dIdx = 1
+    if (outline.flags & FT_OUTLINE_REVERSE_FILL)  == 1
+        (lastIdx, firstIdx) = (firstIdx, lastIdx)
+        dIdx = -1 
+    end
+
+    tags = unsafe_wrap(Array, outline.tags, outline.n_points)
+    points = unsafe_wrap(Array, outline.points, outline.n_points)
+    firstOnCurve = (tags[firstIdx] & FT_CURVE_TAG_ON) == 1
+    lastOnCurve = (tags[lastIdx] & FT_CURVE_TAG_ON) == 1
+    if firstOnCurve
+        vec2 = points[firstIdx]
+        first = [vec2.x, vec2.y]
+        firstIdx += dIdx
+    elseif lastOnCurve
+        vec2 = points[lastIdx]
+        first = [vec2.x, vec2.y]
+        lastIdx -= dIdx
+    else
+        fvec2 = points[firstIdx]
+        lvec2 = points[lastIdx]
+        first = [(fvec2.x + lvec2.x)/2, (fvec2.y + lvec2.y)/2]
+    end
+    start = first
+    control = first
+    previous = first
+
+    previousTag = FT_CURVE_TAG_ON
+
+    for idx in firstIdx:dIdx:lastIdx
+        vec2 = points[idx]
+        current = [vec2.x, vec2.y]
+        currentTag = tags[idx]
+        if currentTag == FT_CURVE_TAG_CUBIC
+            control = previous
+        elseif currentTag == FT_CURVE_TAG_ON
+            if previousTag == FT_CURVE_TAG_CUBIC
+                #TODO
+                b0 = start
+                b1 = control
+                b2 = previous
+                b3 = current
+
+                c0 = b0 .+ 0.75f0*(b1 .- b0)
+                c1 = b3 .+ 0.75f0*(b2 .- b3)
+
+                d = (c0 .+ c1)/2
+
+                push!(bufferCurves, BufferCurve(c0..., c1..., d...))
+            
+            elseif previousTag == FT_CURVE_TAG_ON
+                midPoint = (previous .+ current)/2
+                push!(bufferCurves, BufferCurve(previous..., midPoint..., current...))
+            else 
+                push!(bufferCurves, BufferCurve(start..., previous..., current...))
+            end
+            start = current
+            control = current
+        else
+            if previousTag == FT_CURVE_TAG_ON
+                # NO OP
+            else
+                midPoint = (previous .+ current)/2
+                push!(bufferCurves, BufferCurve(start..., previous..., midPoint...))
+                start = midPoint
+                control = midPoint
+            end
+        end
+        previous = current
+        previousTag = currentTag
+    end
+
+    if previousTag == FT_CURVE_TAG_CUBIC
+        b0 = start
+        b1 = control
+        b2 = previous
+        b3 = first
+
+        c0 = b0 .+ 0.75f0*(b1 .- b0)
+        c1 = b3 .+ 0.75f0*(b2 .- b3)
+
+        d = (c0 .+ c1)/2
+
+        push!(bufferCurves, BufferCurve(b0..., c0..., d...))
+        push!(bufferCurves, BufferCurve(d..., c1..., b3...))
+    elseif previousTag == FT_CURVE_TAG_ON
+        midPoint = (previous .+ first)/2
+        push!(bufferCurves, BufferCurve(previous..., midPoint..., first...))
+    else
+        push!(bufferCurves, BufferCurve(start..., previous..., first...))
+    end
+end
+
+str = """
+    In the center of Fedora, that gray stone metropolis, stands a metal building
+    with a crystal globe in every room. Looking into each globe, you see a blue
+    city, the model of a different Fedora. These are the forms the city could have
+    taken if, for one reason or another, it had not become what we see today. In
+    every age someone, looking at Fedora as it was, imagined a way of making it the
+    ideal city, but while he constructed his miniature model, Fedora was already no
+    longer the same as before, and what had been until yesterday a possible future
+    became only a toy in a glass globe.
+
+    The building with the globes is now Fedora's museum: every inhabitant visits it,
+    chooses the city that corresponds to his desires, contemplates it, imagining his
+    reflection in the medusa pond that would have collected the waters of the canal
+    (if it had not been dried up), the view from the high canopied box along the
+    avenue reserved for elephants (now banished from the city), the fun of sliding
+    down the spiral, twisting minaret (which never found a pedestal from which to
+    rise).
+
+    On the map of your empire, O Great Khan, there must be room both for the big,
+    stone Fedora and the little Fedoras in glass globes. Not because they are all
+    equally real, but because they are only assumptions. The one contains what is
+    accepted as necessary when it is not yet so; the others, what is imagined as
+    possible and, a moment later, is possible no longer.
+
+    [from Invisible Cities by Italo Calvino]
+"""
+
+function prepareGlyphsForText(str::String)
+    ftLib = Ref{FT_Library}(C_NULL)
+
+    FT_Init_FreeType(ftLib)
+
+    @assert ftLib[] != C_NULL
+    
+    function loadFace(filename::String, ftlib=ftLib[])
+        face = Ref{FT_Face}()
+        err = FT_New_Face(ftlib, filename, 0, face)
+        @assert err == 0 "Could not load face at $filename with index 0 : Errored $err"
+        return face[]
+    end
+    
+    face = loadFace(joinpath(@__DIR__, "..", "assets", "JuliaMono-Light.ttf"))
+
+    FT_Set_Pixel_Sizes(face, 1.0, 1.0)
+
+    loadFlags = FT_LOAD_NO_BITMAP | FT_KERNING_DEFAULT
+
+    for chr in str
+        glyphIdx = FT_Get_Char_Index(face, chr)
+        FT_Load_Glyph(face, glyphIdx, loadFlags)
+        glyph = face.glyph |> unsafe_load
+        outline = glyph.outline
+        buildGlyph(face, bufferCurves, bufferGlyphs, chr, glyphIdx)
+    end
+
+    FT_Done_FreeType(ftLib[])
+end
+
+
+
+# font = FTFont(joinpath(@__DIR__, "..", "assets", "JuliaMono-Light.ttf"))
+
+# 

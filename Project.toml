@@ -1,0 +1,8 @@
+name = "WGPUFontRenderer"
+uuid = "a1542f8b-7a0a-4a58-9552-347b60bcd058"
+authors = ["Arhik <arhik23@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+FreeType = "b38be410-82b0-50bf-ab77-7b57e271db43"
+WGPUgfx = "02f56413-64a8-464d-a8fa-8dfc28b55f81"
