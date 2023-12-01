@@ -1,3 +1,8 @@
+# following https://github.com/GreenLightning/gpu-font-rendering.git
+# This is to get comfortable with freetype library ...
+# We will then work on WGSL shaders with modified renderer.
+# Hopefully efficient one for WGPUMakie library ...
+
 using FreeType
 
 rootType(::Type{Ref{T}}) where T = T
