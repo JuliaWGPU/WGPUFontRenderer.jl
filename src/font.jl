@@ -5,6 +5,10 @@
 
 using FreeType
 
+using WGPUCore
+
+# __precompile__(false)
+
 rootType(::Type{Ref{T}}) where T = T
 
 Base.fieldnames(::Type{FT_Face}) = Base.fieldnames(FT_FaceRec)
@@ -243,6 +247,55 @@ function prepareGlyphsForText(str::String)
     end
 
     FT_Done_FreeType(ftLib[])
+end
+
+
+function getShaderCode()
+    src = quote
+        struct GlyphUniform
+            start::UInt32
+            stop::UInt32
+        end
+
+        struct CurveUniform
+            p0::Vec2{Float32}
+            p1::Vec2{Float32}
+            p2::Vec2{Float32}
+        end
+
+        @var Uniform 0 0 glyph::@user GlyphUniform
+        @var Uniform 0 1 curve::@user CurveUniform
+        
+    end
+end
+
+
+function getVertexBufferLayout(glyph::Glyph; offset = 0)
+    WGPUCore.GPUVertexBufferLayout => []
+end
+
+
+function getBindingLayouts(glyph::Glyph; binding=0)
+    bindingLayouts = [
+        WGPUCore.WGPUBufferEntry => [
+            :binding => binding,
+            :visibility => ["Vertex", "Fragment"],
+            :type => "Uniform"
+        ],
+    ]
+    return bindingLayouts
+end
+
+
+function getBindings(glyph::Glyph, uniformBuffer; binding=0)
+    bindings = [
+        WGPUCore.GPUBuffer => [
+            :binding => binding,
+            :buffer  => uniformBuffer,
+            :offset  => 0,
+            :size    => uniformBuffer.size
+        ],
+    ]
 end
 
 
