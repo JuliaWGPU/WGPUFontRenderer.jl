@@ -14,24 +14,23 @@ rootType(::Type{Ref{T}}) where T = T
 Base.fieldnames(::Type{FT_Face}) = Base.fieldnames(FT_FaceRec)
 Base.fieldnames(::Type{FT_GlyphSlot}) = Base.fieldnames(FT_GlyphSlotRec)
 
-Base.getproperty(fo::FT_Face, sym::Symbol) = 
+Base.getproperty(fo::FT_Face, sym::Symbol) =
     Base.getproperty(fo |> unsafe_load, sym)
-Base.getproperty(fo::FT_GlyphSlot, sym::Symbol) = 
+Base.getproperty(fo::FT_GlyphSlot, sym::Symbol) =
     Base.getproperty(fo |> unsafe_load, sym)
 
-
-mutable struct Glyph
-    index::FT_UInt
+struct Glyph
+    index::UInt32
     bufferIndex::Int32
     curveCount::Int32
-    width::FT_Pos
-    height::FT_Pos
-    bearingX::FT_Pos
-    bearingY::FT_Pos
-    advance::FT_Pos
+    width::Int32  # Changed from FT_Pos to Int32
+    height::Int32
+    bearingX::Int32
+    bearingY::Int32
+    advance::Int32
 end
 
-mutable struct BufferGlyph
+struct BufferGlyph
     start::UInt32
     count::UInt32
 end
@@ -60,8 +59,7 @@ glyphs = Dict()
 function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
     # bufferCurves = BufferCurve[]
     faceRec = face |> unsafe_load
-    bufferGlyph = BufferGlyph(0, 0)
-    bufferGlyph.start = (curves |> length)
+    glyphStart = UInt32(curves |> length)
 
     start = 1
 
@@ -76,19 +74,20 @@ function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
         @info start
     end
 
-    bufferGlyph.count = (curves |> length) - bufferGlyph.start
+    glyphCount = UInt32((curves |> length) - glyphStart)
+    bufferGlyph = BufferGlyph(glyphStart, glyphCount)
     bufferIdx = bufferGlyphs |> length
     push!(bufferGlyphs, bufferGlyph)
 
     glyph = Glyph(
-        glyphIdx,
-        bufferIdx,
-        bufferGlyph.count,
-        glyph.metrics.width,
-        glyph.metrics.height,
-        glyph.metrics.horiBearingX,
-        glyph.metrics.horiBearingY,
-        glyph.metrics.horiAdvance,
+        UInt32(glyphIdx),
+        Int32(bufferIdx),
+        Int32(glyphCount),
+        Int32(glyph.metrics.width),
+        Int32(glyph.metrics.height),
+        Int32(glyph.metrics.horiBearingX),
+        Int32(glyph.metrics.horiBearingY),
+        Int32(glyph.metrics.horiAdvance),
     )
     glyphs[charCode] = glyph
 end
@@ -96,12 +95,12 @@ end
 
 function convertContour(bufferCurves, outline, firstIdx, lastIdx)
     if firstIdx == lastIdx
-        return 
+        return
     end
     dIdx = 1
     if (outline.flags & FT_OUTLINE_REVERSE_FILL)  == 1
         (lastIdx, firstIdx) = (firstIdx, lastIdx)
-        dIdx = -1 
+        dIdx = -1
     end
 
     tags = unsafe_wrap(Array, outline.tags, outline.n_points)
@@ -147,11 +146,10 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
                 d = (c0 .+ c1)/2
 
                 push!(bufferCurves, BufferCurve(c0..., c1..., d...))
-            
             elseif previousTag == FT_CURVE_TAG_ON
                 midPoint = (previous .+ current)/2
                 push!(bufferCurves, BufferCurve(previous..., midPoint..., current...))
-            else 
+            else
                 push!(bufferCurves, BufferCurve(start..., previous..., current...))
             end
             start = current
@@ -224,15 +222,15 @@ function prepareGlyphsForText(str::String)
     FT_Init_FreeType(ftLib)
 
     @assert ftLib[] != C_NULL
-    
+
     function loadFace(filename::String, ftlib=ftLib[])
         face = Ref{FT_Face}()
         err = FT_New_Face(ftlib, filename, 0, face)
         @assert err == 0 "Could not load face at $filename with index 0 : Errored $err"
         return face[]
     end
-    
-    face = loadFace(joinpath(@__DIR__, "..", "assets", "JuliaMono-Light.ttf"))
+
+    face = loadFace(joinpath(pkgdir(WGPUFontRenderer), "assets", "JuliaMono-Light.ttf"))
 
     FT_Set_Pixel_Sizes(face, 1.0, 1.0)
 
@@ -252,20 +250,20 @@ end
 
 function getShaderCode()
     src = quote
-        struct GlyphUniform
+        struct BufferGlyph
             start::UInt32
             stop::UInt32
         end
 
-        struct CurveUniform
+        struct BufferCurve
             p0::Vec2{Float32}
             p1::Vec2{Float32}
             p2::Vec2{Float32}
         end
 
-        @var Uniform 0 0 glyph::@user GlyphUniform
-        @var Uniform 0 1 curve::@user CurveUniform
-        
+        @var StorageRead 0 0 glyph::@user BufferGlyph
+        @var StorageRead 0 1 curve::@user BufferCurve
+
     end
 end
 
@@ -279,8 +277,8 @@ function getBindingLayouts(glyph::Glyph; binding=0)
     bindingLayouts = [
         WGPUCore.WGPUBufferEntry => [
             :binding => binding,
-            :visibility => ["Vertex", "Fragment"],
-            :type => "Uniform"
+            :visibility => ["Vertex", "Fragment", "Compute"],
+            :type => "StorageRead"
         ],
     ]
     return bindingLayouts
@@ -302,4 +300,4 @@ end
 
 # font = FTFont(joinpath(@__DIR__, "..", "assets", "JuliaMono-Light.ttf"))
 
-# 
+#

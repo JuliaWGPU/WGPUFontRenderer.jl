@@ -1,9 +1,15 @@
 name = "WGPUFontRenderer"
 uuid = "a1542f8b-7a0a-4a58-9552-347b60bcd058"
-authors = ["Arhik <arhik23@gmail.com>"]
 version = "0.1.0"
+authors = ["Arhik <arhik23@gmail.com>"]
 
 [deps]
 FreeType = "b38be410-82b0-50bf-ab77-7b57e271db43"
+WGPUCanvas = "edfb154a-8991-4155-9628-fd26c9c32bf2"
 WGPUCore = "53d714bf-0d76-4802-84b4-6cb75cca55f5"
-WGPUgfx = "02f56413-64a8-464d-a8fa-8dfc28b55f81"
+WGPUNative = "c14bfd16-04f9-4c2f-a915-b355584b5509"
+
+[sources]
+WGPUCanvas = {path = "..\\WGPUCanvas"}
+WGPUCore = {path = "C:\\Users\\arhik\\.julia\\dev\\WGPUCore"}
+WGPUNative = {path = "C:\\Users\\arhik\\.julia\\dev\\WGPUNative"}
