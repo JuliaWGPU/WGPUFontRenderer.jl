@@ -220,10 +220,10 @@ fn computeCoverage(
     
     if (abs(a.y) >= 1e-5) {
         // Quadratic segment, solve abc formula to find roots.
-        let radicand = b.y * b.y - a.x * c.x * (-1);
-        let correctedRadicand = max(0.0, radicand);  // Ensure it's non-negative for sqrt
+        let radicand = b.y * b.y - a.y * c.y;
+        if (radicand <= 0.0) { return 0.0; }
         
-        let s = sqrt(correctedRadicand);
+        let s = sqrt(radicand);
         t0 = (b.y - s) / a.y;
         t1 = (b.y + s) / a.y;
     } else {
