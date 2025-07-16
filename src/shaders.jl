@@ -58,8 +58,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 end
 
 function getFragmentShader()::String
-    return getDebugFragmentShader()  # Use debug shader first to see positioning
-    # return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
+    # return getDebugFragmentShader()  # Use debug shader first to see positioning
+    return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
 end
 
 # Simple debug shader that shows solid colors per character
@@ -188,15 +188,11 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     
     alpha = clamp(alpha, 0.0, 1.0);
     
-    // Fix inverted text by inverting the alpha value. Ensure that rendered glyphs appear correctly.
-    if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-        alpha = 1.0 - alpha; 
-    }
+    // The alpha should be inverted for proper text rendering
+    alpha = 1.0 - alpha;
     
-    // Debug: Show alpha as grayscale to understand coverage
-    
-    // For debugging, output alpha as grayscale to analyze.
-    return vec4<f32>(alpha, alpha, alpha, 1.0);
+    // Use the font color with calculated alpha
+    return vec4<f32>(uniforms.color.rgb, alpha);
 }
 
 fn computeCoverage(
