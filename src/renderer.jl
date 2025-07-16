@@ -208,6 +208,13 @@ function loadFontData(renderer::FontRenderer, text::String)
     # Generate vertex data for rendering
     generateVertexData(renderer, text)
     
+    # Debug: Print first few normalized curves to check they're in 0-1 range
+    println("\nFirst 5 normalized curves:")
+    for i in 1:min(5, length(renderer.curves))
+        curve = renderer.curves[i]
+        println("  Curve $i: p0=($(curve.x0), $(curve.y0)) p1=($(curve.x1), $(curve.y1)) p2=($(curve.x2), $(curve.y2))")
+    end
+    
     # Create GPU buffers
     createGPUBuffers(renderer)
     
@@ -221,8 +228,8 @@ function generateVertexData(renderer::FontRenderer, text::String)
 # Scale adjusted for consistent text sizing
     scale = 0.005f0  # Adjust scale for text
     
-    # Start from left side but not too far
-    xOffset = -0.9f0  # Start from left side of screen
+    # Start from center of screen for better visibility
+    xOffset = -0.2f0  # Start from center-left
     yOffset = 0.0f0   # Center vertically
     
     println("Generating vertex data for text: \"$text\"")
@@ -250,14 +257,15 @@ function generateVertexData(renderer::FontRenderer, text::String)
             # Only generate vertices if glyph has actual dimensions
             if width > 0 && height > 0
                 # First triangle: top-left, bottom-left, top-right
-                push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, 0.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x1, y1, 0.0f0, 1.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x2, y2, 1.0f0, 0.0f0, glyph.bufferIndex))
+                # Fix UV coordinates to match curve normalization (Y-flipped)
+                push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, 1.0f0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x1, y1, 0.0f0, 0.0f0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x2, y2, 1.0f0, 1.0f0, glyph.bufferIndex))
                 
                 # Second triangle: bottom-left, bottom-right, top-right
-                push!(renderer.vertices, BufferVertex(x1, y1, 0.0f0, 1.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x2, y1, 1.0f0, 1.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x2, y2, 1.0f0, 0.0f0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x1, y1, 0.0f0, 0.0f0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x2, y1, 1.0f0, 0.0f0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x2, y2, 1.0f0, 1.0f0, glyph.bufferIndex))
             end
             
             # Advance position for next character - use advance instead of width
@@ -293,32 +301,48 @@ function normalizeCurves(renderer::FontRenderer, bufferGlyphs::Vector{BufferGlyp
             bearingX = Float32(glyph.bearingX)
             bearingY = Float32(glyph.bearingY)
             
+            # println("\nGlyph $(i) normalization:")
+            # println("  width=$glyphWidth, height=$glyphHeight")
+            # println("  bearingX=$bearingX, bearingY=$bearingY")
+            
             # Skip if glyph has no dimensions (like space characters)
             if glyphWidth == 0 || glyphHeight == 0
                 continue
             end
             
             # Process each curve in this glyph
-            for i in startIdx:endIdx
-                curve = renderer.curves[i]
+            for j in startIdx:endIdx
+                curve = renderer.curves[j]
+                
+                # Debug: Show original curve coordinates
+                # if j <= startIdx + 2  # Show first 3 curves per glyph
+                #     println("  Original curve $(j-startIdx+1): p0=($(curve.x0), $(curve.y0)) p1=($(curve.x1), $(curve.y1)) p2=($(curve.x2), $(curve.y2))")
+                # end
                 
                 # Normalize curve coordinates to UV space (0,0) to (1,1)
                 # The curves are relative to the glyph's origin, so we need to:
                 # 1. Translate by bearing to get glyph-relative coordinates
                 # 2. Scale by glyph dimensions to get UV coordinates
+                # 3. Flip Y axis (FreeType Y goes down, UV Y goes up)
                 
                 # Transform curve points to UV coordinates
                 # Normalize to 0-1 range based on glyph bounding box
-                # No mirroring - keep original coordinate system
+                # The glyph's actual bounds are from bearingX to bearingX + width
+                # and from bearingY - height to bearingY
                 x0 = (curve.x0 - bearingX) / glyphWidth
-                y0 = 1.0 - ((curve.y0 - bearingY) / glyphHeight)  # Flip Y for UV coordinates
+                y0 = (bearingY - curve.y0) / glyphHeight  # Flip Y: higher Y values in FreeType = lower Y in UV
                 x1 = (curve.x1 - bearingX) / glyphWidth
-                y1 = 1.0 - ((curve.y1 - bearingY) / glyphHeight)  # Flip Y for UV coordinates
+                y1 = (bearingY - curve.y1) / glyphHeight  # Flip Y
                 x2 = (curve.x2 - bearingX) / glyphWidth
-                y2 = 1.0 - ((curve.y2 - bearingY) / glyphHeight)  # Flip Y for UV coordinates
+                y2 = (bearingY - curve.y2) / glyphHeight  # Flip Y
+                
+                # Debug: Show normalized curve coordinates
+                # if j <= startIdx + 2  # Show first 3 curves per glyph
+                #     println("  Normalized curve $(j-startIdx+1): p0=($x0, $y0) p1=($x1, $y1) p2=($x2, $y2)")
+                # end
                 
                 # Update the curve with normalized coordinates
-                renderer.curves[i] = BufferCurve(x0, y0, x1, y1, x2, y2)
+                renderer.curves[j] = BufferCurve(x0, y0, x1, y1, x2, y2)
             end
         end
     end
@@ -354,13 +378,27 @@ function createGPUBuffers(renderer::FontRenderer)
         )
     end
     
-    # Create uniform buffer
+# Create uniform buffer with proper orthographic projection
+    # Create orthographic projection matrix for screen coordinates
+    # Assuming viewport size of 800x600 - this should be parameterized later
+    left = 0.0f0
+    right = 800.0f0
+    bottom = 0.0f0
+    top = 600.0f0
+    near = -1.0f0
+    far = 1.0f0
+    
+    # Column-major orthographic projection matrix
+    ortho = (
+        2.0f0 / (right - left), 0.0f0, 0.0f0, -(right + left) / (right - left),
+        0.0f0, 2.0f0 / (top - bottom), 0.0f0, -(top + bottom) / (top - bottom),
+        0.0f0, 0.0f0, -2.0f0 / (far - near), -(far + near) / (far - near),
+        0.0f0, 0.0f0, 0.0f0, 1.0f0
+    )
+    
     uniforms = FontUniforms(
         (1.0f0, 1.0f0, 1.0f0, 1.0f0),  # White color
-        (1.0f0, 0.0f0, 0.0f0, 0.0f0,   # Identity projection matrix 
-         0.0f0, 1.0f0, 0.0f0, 0.0f0,
-         0.0f0, 0.0f0, 1.0f0, 0.0f0,
-         0.0f0, 0.0f0, 0.0f0, 1.0f0),
+        ortho,  # Proper orthographic projection matrix
         1.0f0,  # Anti-aliasing window size
         0,      # Disable super-sampling AA for now
         (0, 0)  # Padding

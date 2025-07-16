@@ -217,6 +217,11 @@ str = """
 """
 
 function prepareGlyphsForText(str::String)
+    # Clear global buffers to prevent accumulation
+    empty!(bufferCurves)
+    empty!(bufferGlyphs)
+    empty!(glyphs)
+    
     ftLib = Ref{FT_Library}(C_NULL)
 
     FT_Init_FreeType(ftLib)
