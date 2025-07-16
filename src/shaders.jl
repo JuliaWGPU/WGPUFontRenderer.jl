@@ -58,8 +58,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 end
 
 function getFragmentShader()::String
-    # return getDebugFragmentShader()  # Use debug shader first to see positioning
-    return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
+    return getDebugFragmentShader()  # Use debug shader first to see positioning
+    # return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
 end
 
 # Simple debug shader that shows solid colors per character
