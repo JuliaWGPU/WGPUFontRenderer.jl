@@ -308,14 +308,14 @@ function normalizeCurves(renderer::FontRenderer, bufferGlyphs::Vector{BufferGlyp
                 # 2. Scale by glyph dimensions to get UV coordinates
                 
                 # Transform curve points to UV coordinates
-                # Important: Match C++ implementation coordinate system
-                # Fix mirroring by flipping X coordinates
-                x0 = 1.0 - ((curve.x0 - bearingX) / glyphWidth)
-                y0 = (curve.y0 - bearingY + glyphHeight) / glyphHeight  # Correct Y transformation
-                x1 = 1.0 - ((curve.x1 - bearingX) / glyphWidth)
-                y1 = (curve.y1 - bearingY + glyphHeight) / glyphHeight  # Correct Y transformation
-                x2 = 1.0 - ((curve.x2 - bearingX) / glyphWidth)
-                y2 = (curve.y2 - bearingY + glyphHeight) / glyphHeight  # Correct Y transformation
+                # Normalize to 0-1 range based on glyph bounding box
+                # No mirroring - keep original coordinate system
+                x0 = (curve.x0 - bearingX) / glyphWidth
+                y0 = 1.0 - ((curve.y0 - bearingY) / glyphHeight)  # Flip Y for UV coordinates
+                x1 = (curve.x1 - bearingX) / glyphWidth
+                y1 = 1.0 - ((curve.y1 - bearingY) / glyphHeight)  # Flip Y for UV coordinates
+                x2 = (curve.x2 - bearingX) / glyphWidth
+                y2 = 1.0 - ((curve.y2 - bearingY) / glyphHeight)  # Flip Y for UV coordinates
                 
                 # Update the curve with normalized coordinates
                 renderer.curves[i] = BufferCurve(x0, y0, x1, y1, x2, y2)
