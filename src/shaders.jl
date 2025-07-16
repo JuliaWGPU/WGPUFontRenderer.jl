@@ -163,17 +163,7 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     
     let glyph = glyphs[input.bufferIndex];
     
-    // Debug: Check if we have any curves at all
-    if (glyph.count == 0u) {
-        // No curves for this glyph, show blue
-        return vec4<f32>(0.0, 0.0, 1.0, 1.0);
-    }
-    
-    // Debug: Show purple if we have curves
-    if (glyph.count > 0u) {
-        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
-    }
-    
+    // Process curves for this glyph
     for (var i = 0u; i < glyph.count; i += 1u) {
         let curveIndex = glyph.start + i;
         if (curveIndex >= arrayLength(&curves)) {
@@ -187,27 +177,19 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
         let p1 = curve.p1 - input.uv;
         let p2 = curve.p2 - input.uv;
         
-        alpha += computeCoverage(inverseDiameter.x, p0, p1, p2);
-        
-        if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-            alpha += computeCoverage(inverseDiameter.y, rotate(p0), rotate(p1), rotate(p2));
-        }
+        // Simple coverage calculation - check if we're inside the curve
+        let coverage = computeCoverage(inverseDiameter.x, p0, p1, p2);
+        alpha += coverage;
     }
     
-    if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-        alpha *= 0.5;
-    }
-    
+    // Clamp alpha to valid range
     alpha = clamp(alpha, 0.0, 1.0);
     
-    // Debug: Show what's happening with coverage
-    if (alpha > 0.0) {
-        // If we have any coverage, show it as red
-        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
-    } else {
-        // No coverage, show as green
-        return vec4<f32>(0.0, 1.0, 0.0, 1.0);
-    }
+    // Invert alpha for proper text rendering (filled areas should be opaque)
+    alpha = 1.0 - alpha;
+    
+    // Return white text with calculated alpha
+    return vec4<f32>(1.0, 1.0, 1.0, alpha);
 }
 
 fn computeCoverage(
