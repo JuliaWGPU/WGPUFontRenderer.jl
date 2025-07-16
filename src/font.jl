@@ -216,6 +216,9 @@ str = """
     [from Invisible Cities by Italo Calvino]
 """
 
+# Global variable to store emSize from font
+fontEmSize = 64
+
 function prepareGlyphsForText(str::String)
     # Clear global buffers to prevent accumulation
     empty!(bufferCurves)
@@ -237,9 +240,12 @@ function prepareGlyphsForText(str::String)
 
     face = loadFace(joinpath(pkgdir(WGPUFontRenderer), "assets", "JuliaMono-Light.ttf"))
 
-    FT_Set_Pixel_Sizes(face, 1.0, 1.0)
+    # Store the font's emSize globally
+    global fontEmSize = face.units_per_EM
+    println("Font emSize: ", fontEmSize)
 
-    loadFlags = FT_LOAD_NO_BITMAP | FT_KERNING_DEFAULT
+    # Use FT_LOAD_NO_SCALE to get font units directly (like the reference implementation)
+    loadFlags = FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP
 
     for chr in str
         glyphIdx = FT_Get_Char_Index(face, chr)

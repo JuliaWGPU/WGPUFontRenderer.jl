@@ -226,12 +226,12 @@ function generateVertexData(renderer::FontRenderer, text::String)
     empty!(renderer.vertices)
     
     # Use screen coordinates with proper scaling
-    # Assuming font size of 64 units, scale to reasonable screen size
-    scale = 0.5f0  # Much smaller scale factor for font size
+    # Font has 2000 units per em, so we need much smaller scale
+    scale = 0.05f0  # Much smaller scale factor for 2000 unit font
     
     # Start from reasonable screen position
     xOffset = 50.0f0   # Start from left margin
-    yOffset = 300.0f0  # Center vertically (screen height is 600)
+    yOffset = 150.0f0  # Position higher up (screen height is 600)
     
     println("Generating vertex data for text: \"$text\"")
     
@@ -246,27 +246,38 @@ function generateVertexData(renderer::FontRenderer, text::String)
             height = glyph.height * scale
             bearingX = glyph.bearingX * scale
             bearingY = glyph.bearingY * scale
-            
-            # Define quad vertices with proper positioning
+
+            # Define quad vertices with correct orientation
             x1 = xOffset + bearingX
-            y1 = yOffset + bearingY - height  # Bottom of glyph
-            x2 = x1 + width                   # Right edge
-            y2 = yOffset + bearingY           # Top of glyph
+            y1 = yOffset - bearingY + height  # Bottom of glyph
+            x2 = x1 + width
+            y2 = yOffset - bearingY           # Top of glyph
             
             println("    Quad: ($x1, $y1) to ($x2, $y2)")
             
             # Only generate vertices if glyph has actual dimensions
-            if width > 0 && height > 0
-                # First triangle: top-left, bottom-left, top-right
-                # Fix UV coordinates to match curve normalization (Y-flipped)
-                push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, 1.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x1, y1, 0.0f0, 0.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x2, y2, 1.0f0, 1.0f0, glyph.bufferIndex))
+            if width > 0.0f0 && height > 0.0f0
+                # Generate UV coordinates in font units (NOT normalized)
+                # This matches the gpu-font-rendering approach where UVs are in font units
                 
-                # Second triangle: bottom-left, bottom-right, top-right
-                push!(renderer.vertices, BufferVertex(x1, y1, 0.0f0, 0.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x2, y1, 1.0f0, 0.0f0, glyph.bufferIndex))
-                push!(renderer.vertices, BufferVertex(x2, y2, 1.0f0, 1.0f0, glyph.bufferIndex))
+                # Calculate UV coordinates in font units (glyph coordinate space)
+                # The coverage calculation expects UVs in the same space as curve data
+                u0 = Float32(glyph.bearingX)
+                v0 = Float32(glyph.bearingY - glyph.height)
+                u1 = Float32(glyph.bearingX + glyph.width)
+                v1 = Float32(glyph.bearingY)
+                
+                println("    UV coordinates: u0=$u0, v0=$v0, u1=$u1, v1=$v1")
+                
+                # First triangle: bottom-left, bottom-right, top-left (clockwise)
+                push!(renderer.vertices, BufferVertex(x1, y1, u0, v0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, glyph.bufferIndex))
+                
+                # Second triangle: bottom-right, top-right, top-left (clockwise)
+                push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x2, y2, u1, v1, glyph.bufferIndex))
+                push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, glyph.bufferIndex))
             end
             
             # Advance position for next character - use advance instead of width
@@ -283,69 +294,19 @@ function generateVertexData(renderer::FontRenderer, text::String)
     println("Generated $(length(renderer.vertices)) vertices")
 end
 
-# Normalize curve coordinates to UV space (0.0 to 1.0) per glyph
+# Keep curves in font units (for coverage calculation)
 function normalizeCurves(renderer::FontRenderer, bufferGlyphs::Vector{BufferGlyph})
-    # We need to normalize curves relative to their glyph's bounding box
-    # so that they map correctly to the UV coordinates (0,0) to (1,1) of each glyph quad
+    # For the coverage calculation to work correctly, both UVs and curves
+    # must be in the same coordinate space (font units)
+    # The curves are already in font units from the font processing,
+    # so we don't need to normalize them
     
-    for (i, glyph) in enumerate(renderer.glyphs)
-        bufferGlyph = bufferGlyphs[i]
-        
-        # Get the curves for this glyph
-        startIdx = Int(bufferGlyph.start) + 1  # Convert to 1-based indexing
-        endIdx = startIdx + Int(bufferGlyph.count) - 1
-        
-        if startIdx <= length(renderer.curves) && endIdx <= length(renderer.curves)
-            # Get glyph dimensions in FreeType units
-            glyphWidth = Float32(glyph.width)
-            glyphHeight = Float32(glyph.height)
-            bearingX = Float32(glyph.bearingX)
-            bearingY = Float32(glyph.bearingY)
-            
-            # println("\nGlyph $(i) normalization:")
-            # println("  width=$glyphWidth, height=$glyphHeight")
-            # println("  bearingX=$bearingX, bearingY=$bearingY")
-            
-            # Skip if glyph has no dimensions (like space characters)
-            if glyphWidth == 0 || glyphHeight == 0
-                continue
-            end
-            
-            # Process each curve in this glyph
-            for j in startIdx:endIdx
-                curve = renderer.curves[j]
-                
-                # Debug: Show original curve coordinates
-                # if j <= startIdx + 2  # Show first 3 curves per glyph
-                #     println("  Original curve $(j-startIdx+1): p0=($(curve.x0), $(curve.y0)) p1=($(curve.x1), $(curve.y1)) p2=($(curve.x2), $(curve.y2))")
-                # end
-                
-                # Normalize curve coordinates to UV space (0,0) to (1,1)
-                # The curves are relative to the glyph's origin, so we need to:
-                # 1. Translate by bearing to get glyph-relative coordinates
-                # 2. Scale by glyph dimensions to get UV coordinates
-                # 3. Flip Y axis (FreeType Y goes down, UV Y goes up)
-                
-                # Transform curve points to UV coordinates
-                # Normalize to 0-1 range based on glyph bounding box
-                # The glyph's actual bounds are from bearingX to bearingX + width
-                # and from bearingY - height to bearingY
-                x0 = (curve.x0 - bearingX) / glyphWidth
-                y0 = (bearingY - curve.y0) / glyphHeight  # Flip Y: higher Y values in FreeType = lower Y in UV
-                x1 = (curve.x1 - bearingX) / glyphWidth
-                y1 = (bearingY - curve.y1) / glyphHeight  # Flip Y
-                x2 = (curve.x2 - bearingX) / glyphWidth
-                y2 = (bearingY - curve.y2) / glyphHeight  # Flip Y
-                
-                # Debug: Show normalized curve coordinates
-                # if j <= startIdx + 2  # Show first 3 curves per glyph
-                #     println("  Normalized curve $(j-startIdx+1): p0=($x0, $y0) p1=($x1, $y1) p2=($x2, $y2)")
-                # end
-                
-                # Update the curve with normalized coordinates
-                renderer.curves[j] = BufferCurve(x0, y0, x1, y1, x2, y2)
-            end
-        end
+    println("Keeping curves in font units for coverage calculation")
+    
+    # Debug: Print first few curves to verify they're in font units
+    for i in 1:min(3, length(renderer.curves))
+        curve = renderer.curves[i]
+        println("  Curve $i: p0=($(curve.x0), $(curve.y0)) p1=($(curve.x1), $(curve.y1)) p2=($(curve.x2), $(curve.y2))")
     end
 end
 
@@ -384,8 +345,8 @@ function createGPUBuffers(renderer::FontRenderer)
     # Assuming viewport size of 800x600 - this should be parameterized later
     left = 0.0f0
     right = 800.0f0
-    bottom = 0.0f0
-    top = 600.0f0
+    bottom = 600.0f0  # Flip Y axis - bottom is now larger than top
+    top = 0.0f0       # to match GPU coordinate system
     near = -1.0f0
     far = 1.0f0
     
