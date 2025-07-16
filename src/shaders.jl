@@ -60,7 +60,8 @@ end
 function getFragmentShader()::String
     # return getSimpleTestShader()  # Use simple test shader first
     # return getDebugFragmentShader()  # Use debug shader for UV visualization
-    return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
+    return getDebugCoverageShader()  # Debug coverage calculation
+    # return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
 end
 
 # Simple test shader that shows solid colors per character
@@ -186,6 +187,156 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
 """
 end
 
+# Debug coverage shader to analyze winding number issues
+function getDebugCoverageShader()::String
+    return """
+// Improved fragment shader for font rendering with better numerical stability
+// Based on the reference gpu-font-rendering implementation
+
+struct Glyph {
+    start: u32,
+    count: u32,
+}
+
+struct Curve {
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    p2: vec2<f32>,
+}
+
+struct FontUniforms {
+    color: vec4<f32>,
+    projection: mat4x4<f32>,
+    antiAliasingWindowSize: f32,
+    enableSuperSamplingAntiAliasing: u32,
+    padding: vec2<u32>,
+}
+
+struct FragmentInput {
+    @location(0) uv: vec2<f32>,
+    @location(1) bufferIndex: i32,
+}
+
+@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
+@group(0) @binding(1) var<storage, read> curves: array<Curve>;
+@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
+
+@fragment
+fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    
+    var alpha = 0.0;
+    
+    // Calculate inverse diameter for anti-aliasing using derivatives
+    // This mimics the fwidth() function behavior from the reference
+    let duvdx = dpdx(input.uv);
+    let duvdy = dpdy(input.uv);
+    let inverseDiameter = 1.0 / (uniforms.antiAliasingWindowSize * vec2<f32>(length(duvdx), length(duvdy)));
+    
+    let glyph = glyphs[input.bufferIndex];
+    
+    for (var i = 0u; i < glyph.count; i += 1u) {
+        let curveIndex = glyph.start + i;
+        if (curveIndex >= arrayLength(&curves)) {
+            break;
+        }
+        
+        let curve = curves[curveIndex];
+        
+        // Transform curve control points by subtracting sample position
+        let p0 = curve.p0 - input.uv;
+        let p1 = curve.p1 - input.uv;
+        let p2 = curve.p2 - input.uv;
+        
+        // Calculate coverage for this curve
+        alpha += computeCoverage(inverseDiameter.x, p0, p1, p2);
+        
+        // Apply super-sampling anti-aliasing if enabled
+        if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
+            // Rotate points 90 degrees for second sample
+            let rp0 = vec2<f32>(p0.y, -p0.x);
+            let rp1 = vec2<f32>(p1.y, -p1.x);
+            let rp2 = vec2<f32>(p2.y, -p2.x);
+            
+            alpha += computeCoverage(inverseDiameter.y, rp0, rp1, rp2);
+        }
+    }
+    
+    // Average the samples if super-sampling is enabled
+    if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
+        alpha *= 0.5;
+    }
+    
+    // Clamp final alpha to valid range
+    alpha = clamp(alpha, 0.0, 1.0);
+    
+    // Return final color with proper alpha blending
+    return vec4<f32>(uniforms.color.rgb, uniforms.color.a * alpha);
+}
+
+fn computeCoverage(
+    inverseDiameter: f32,
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    p2: vec2<f32>
+) -> f32 {
+    // Early exit if curve is entirely above or below the ray
+    if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0.0; }
+    if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0.0; }
+    
+    // Quadratic Bezier curve coefficients
+    // Note: Simplified from abc formula by extracting a factor of (-2) from b
+    let a = p0 - 2.0 * p1 + p2;
+    let b = p0 - p1;
+    let c = p0;
+    
+    var t0: f32 = -1.0;
+    var t1: f32 = -1.0;
+    
+    if (abs(a.y) >= 1e-5) {
+        // Quadratic segment - solve using quadratic formula
+        let radicand = b.y * b.y - a.y * c.y;
+        if (radicand > 0.0) {  // Changed from >= to > to avoid numerical issues
+            let s = sqrt(radicand);
+            t0 = (b.y - s) / a.y;
+            t1 = (b.y + s) / a.y;
+        }
+    } else {
+        // Linear segment - avoid division by zero
+        // Handle the case where a.y is near zero more carefully
+        if (abs(p0.y - p2.y) > 1e-10) {
+            let t = p0.y / (p0.y - p2.y);
+            if (p0.y < p2.y) {
+                t0 = -1.0;
+                t1 = t;
+            } else {
+                t0 = t;
+                t1 = -1.0;
+            }
+        }
+    }
+    
+    var alpha = 0.0;
+    
+    // Process first root (exit point)
+    if (t0 >= 0.0 && t0 < 1.0) {  // Changed <= to < to match reference
+        let x = (a.x * t0 - 2.0 * b.x) * t0 + c.x;
+        alpha += clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+    }
+    
+    // Process second root (entry point)
+    if (t1 >= 0.0 && t1 < 1.0) {  // Changed <= to < to match reference
+        let x = (a.x * t1 - 2.0 * b.x) * t1 + c.x;
+        alpha -= clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+    }
+    
+    return alpha;  // Don't clamp here, let the caller handle final clamping
+}
+"""
+end
+
 # Keep the original complex fragment shader for later use
 function getComplexFragmentShader()::String
     return """
@@ -229,9 +380,9 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     var alpha = 0.0;
     
     // Calculate inverse diameter for anti-aliasing based on font units
-    // For font units, we need a much smaller value than screen coordinates
-    // This controls the smoothness of the anti-aliasing
-    let inverseDiameter = 0.1;  // Smaller value for font units
+    // This needs to be tuned based on the actual font scale being used
+    // Larger values = sharper edges, smaller values = more anti-aliasing
+    let inverseDiameter = 1.0;  // Middle-ground value for font units
     
     let glyph = glyphs[input.bufferIndex];
     
@@ -275,27 +426,27 @@ fn computeCoverage(
     let b = p0 - p1;
     let c = p0;
     
-    var t0: f32;
-    var t1: f32;
+    var t0: f32 = -1.0;
+    var t1: f32 = -1.0;
     
     if (abs(a.y) >= 1e-5) {
         // Quadratic segment, solve abc formula to find roots.
         let radicand = b.y * b.y - a.y * c.y;
-        if (radicand <= 0.0) { return 0.0; }
-        
-        let s = sqrt(radicand);
-        t0 = (b.y - s) / a.y;
-        t1 = (b.y + s) / a.y;
+        if (radicand > 0.0) {
+            let s = sqrt(radicand);
+            t0 = (b.y - s) / a.y;
+            t1 = (b.y + s) / a.y;
+            
+            // Ensure t0 <= t1
+            if (t0 > t1) {
+                let temp = t0;
+                t0 = t1;
+                t1 = temp;
+            }
+        }
     } else {
         // Linear segment, avoid division by a.y, which is near zero.
-        // There is only one root, so we have to decide which variable to
-        // assign it to based on the direction of the segment, to ensure that
-        // the ray always exits the shape at t0 and enters at t1.
-        if (abs(p0.y - p2.y) < 1e-10) {
-            // Degenerate case - line is horizontal
-            t0 = -1.0;
-            t1 = -1.0;
-        } else {
+        if (abs(p0.y - p2.y) > 1e-10) {
             let t = p0.y / (p0.y - p2.y);
             if (p0.y < p2.y) {
                 t0 = -1.0;
@@ -309,17 +460,20 @@ fn computeCoverage(
     
     var alpha = 0.0;
     
-    if (t0 >= 0.0 && t0 < 1.0) {
+    if (t0 >= 0.0 && t0 <= 1.0) {
         let x = (a.x * t0 - 2.0 * b.x) * t0 + c.x;
-        alpha += clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha += contribution;
     }
     
-    if (t1 >= 0.0 && t1 < 1.0) {
+    if (t1 >= 0.0 && t1 <= 1.0) {
         let x = (a.x * t1 - 2.0 * b.x) * t1 + c.x;
-        alpha -= clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha -= contribution;
     }
     
-    return alpha;
+    // Clamp the final result to prevent extreme values
+    return clamp(alpha, -1.0, 1.0);
 }
 
 fn rotate(v: vec2<f32>) -> vec2<f32> {

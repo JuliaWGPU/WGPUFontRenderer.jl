@@ -226,14 +226,15 @@ function generateVertexData(renderer::FontRenderer, text::String)
     empty!(renderer.vertices)
     
     # Use screen coordinates with proper scaling
-    # Font has 2000 units per em, so we need much smaller scale
-    scale = 0.05f0  # Much smaller scale factor for 2000 unit font
+    # Font has units per em (stored in fontEmSize), so we need to scale appropriately
+    scale = 0.05f0  # Scale factor to map font units to screen pixels
     
     # Start from reasonable screen position
     xOffset = 50.0f0   # Start from left margin
     yOffset = 150.0f0  # Position higher up (screen height is 600)
     
     println("Generating vertex data for text: \"$text\"")
+    println("Font emSize: $fontEmSize")
     
     for (i, char) in enumerate(text)
         if haskey(glyphs, char)
@@ -241,7 +242,7 @@ function generateVertexData(renderer::FontRenderer, text::String)
             
             println("  Character '$char': bufferIndex=$(glyph.bufferIndex), width=$(glyph.width), height=$(glyph.height), advance=$(glyph.advance)")
             
-            # Calculate glyph quad dimensions
+            # Calculate glyph quad dimensions in screen coordinates
             width = glyph.width * scale  
             height = glyph.height * scale
             bearingX = glyph.bearingX * scale
@@ -257,24 +258,21 @@ function generateVertexData(renderer::FontRenderer, text::String)
             
             # Only generate vertices if glyph has actual dimensions
             if width > 0.0f0 && height > 0.0f0
-                # Generate UV coordinates in font units (NOT normalized)
-                # This matches the gpu-font-rendering approach where UVs are in font units
-                
-                # Calculate UV coordinates in font units (glyph coordinate space)
-                # The coverage calculation expects UVs in the same space as curve data
+                # Generate UV coordinates in font units (same coordinate space as curves)
+                # This is crucial for the coverage calculation to work correctly
                 u0 = Float32(glyph.bearingX)
                 v0 = Float32(glyph.bearingY - glyph.height)
                 u1 = Float32(glyph.bearingX + glyph.width)
                 v1 = Float32(glyph.bearingY)
                 
-                println("    UV coordinates: u0=$u0, v0=$v0, u1=$u1, v1=$v1")
+                println("    UV coordinates in font units: u0=$u0, v0=$v0, u1=$u1, v1=$v1")
                 
-                # First triangle: bottom-left, bottom-right, top-left (clockwise)
+                # First triangle: bottom-left, bottom-right, top-left (counter-clockwise)
                 push!(renderer.vertices, BufferVertex(x1, y1, u0, v0, glyph.bufferIndex))
                 push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, glyph.bufferIndex))
                 push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, glyph.bufferIndex))
                 
-                # Second triangle: bottom-right, top-right, top-left (clockwise)
+                # Second triangle: bottom-right, top-right, top-left (counter-clockwise)
                 push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, glyph.bufferIndex))
                 push!(renderer.vertices, BufferVertex(x2, y2, u1, v1, glyph.bufferIndex))
                 push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, glyph.bufferIndex))
@@ -358,10 +356,14 @@ function createGPUBuffers(renderer::FontRenderer)
         -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1.0f0
     )
     
+    # Calculate appropriate anti-aliasing window size based on font scale
+    # The scale factor used in vertex generation is 0.05, so 1 screen pixel = 20 font units
+    pixelSizeInFontUnits = 1.0f0 / 0.05f0  # = 20.0 font units per screen pixel
+    
     uniforms = FontUniforms(
         (1.0f0, 1.0f0, 1.0f0, 1.0f0),  # White color
         ortho,  # Proper orthographic projection matrix
-        1.0f0,  # Anti-aliasing window size
+        pixelSizeInFontUnits,  # Anti-aliasing window size in font units
         0,      # Disable super-sampling AA for now
         (0, 0)  # Padding
     )

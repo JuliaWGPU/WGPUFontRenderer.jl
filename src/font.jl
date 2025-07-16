@@ -61,7 +61,8 @@ function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
     faceRec = face |> unsafe_load
     glyphStart = UInt32(curves |> length)
 
-    start = 1
+    # Start with 0-based indexing to match C++ reference implementation
+    start = 0
 
     glyph = faceRec.glyph |> unsafe_load
 
@@ -69,7 +70,9 @@ function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
     contours = unsafe_wrap(Array, glyph.outline.contours, nContours)
 
     for contourIdx in 1:nContours
-        convertContour(curves, glyph.outline, start, contours[contourIdx])
+        # Convert from 0-based to 1-based for Julia array indexing
+        # contours[contourIdx] is 0-based from C, so we add 1 for Julia
+        convertContour(curves, glyph.outline, start + 1, contours[contourIdx] + 1)
         start = contours[contourIdx] + 1
         @info start
     end
@@ -105,36 +108,54 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
 
     tags = unsafe_wrap(Array, outline.tags, outline.n_points)
     points = unsafe_wrap(Array, outline.points, outline.n_points)
-    firstOnCurve = (tags[firstIdx] & FT_CURVE_TAG_ON) == 1
-    lastOnCurve = (tags[lastIdx] & FT_CURVE_TAG_ON) == 1
-    if firstOnCurve
-        vec2 = points[firstIdx]
-        first = [vec2.x, vec2.y]
-        firstIdx += dIdx
-    elseif lastOnCurve
-        vec2 = points[lastIdx]
-        first = [vec2.x, vec2.y]
-        lastIdx -= dIdx
-    else
-        fvec2 = points[firstIdx]
-        lvec2 = points[lastIdx]
-        first = [(fvec2.x + lvec2.x)/2, (fvec2.y + lvec2.y)/2]
+    
+    # Helper function to convert FT_Vector to normalized coordinates
+    function convert(v)
+        return [Float32(v.x), Float32(v.y)]
     end
+    
+    # Helper function to create midpoint
+    function makeMidpoint(a, b)
+        return 0.5f0 * (a .+ b)
+    end
+    
+    # Helper function to create curve
+    function makeCurve(p0, p1, p2)
+        return BufferCurve(p0[1], p0[2], p1[1], p1[2], p2[1], p2[2])
+    end
+    
+    # Find a point that is on the curve and remove it from the list
+    local first
+    firstOnCurve = (tags[firstIdx] & FT_CURVE_TAG_ON) == 1
+    if firstOnCurve
+        first = convert(points[firstIdx])
+        firstIdx += dIdx
+    else
+        lastOnCurve = (tags[lastIdx] & FT_CURVE_TAG_ON) == 1
+        if lastOnCurve
+            first = convert(points[lastIdx])
+            lastIdx -= dIdx
+        else
+            first = makeMidpoint(convert(points[firstIdx]), convert(points[lastIdx]))
+            # This is a virtual point, so we don't have to remove it
+        end
+    end
+    
     start = first
     control = first
     previous = first
-
     previousTag = FT_CURVE_TAG_ON
-
+    
     for idx in firstIdx:dIdx:lastIdx
-        vec2 = points[idx]
-        current = [vec2.x, vec2.y]
-        currentTag = tags[idx]
+        current = convert(points[idx])
+        currentTag = tags[idx] & 0x3  # Extract the tag bits (0x3 = 11 binary)
+        
         if currentTag == FT_CURVE_TAG_CUBIC
+            # No-op, wait for more points
             control = previous
         elseif currentTag == FT_CURVE_TAG_ON
             if previousTag == FT_CURVE_TAG_CUBIC
-                #TODO
+                # Cubic bezier approximation with two quadratic curves
                 b0 = start
                 b1 = control
                 b2 = previous
@@ -142,32 +163,35 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
 
                 c0 = b0 .+ 0.75f0*(b1 .- b0)
                 c1 = b3 .+ 0.75f0*(b2 .- b3)
+                d = makeMidpoint(c0, c1)
 
-                d = (c0 .+ c1)/2
-
-                push!(bufferCurves, BufferCurve(c0..., c1..., d...))
+                push!(bufferCurves, makeCurve(b0, c0, d))
+                push!(bufferCurves, makeCurve(d, c1, b3))
             elseif previousTag == FT_CURVE_TAG_ON
-                midPoint = (previous .+ current)/2
-                push!(bufferCurves, BufferCurve(previous..., midPoint..., current...))
+                # Linear segment
+                push!(bufferCurves, makeCurve(previous, makeMidpoint(previous, current), current))
             else
-                push!(bufferCurves, BufferCurve(start..., previous..., current...))
+                # Regular bezier curve
+                push!(bufferCurves, makeCurve(start, previous, current))
             end
             start = current
             control = current
-        else
+        else # currentTag == FT_CURVE_TAG_CONIC
             if previousTag == FT_CURVE_TAG_ON
-                # NO OP
+                # No-op, wait for third point
             else
-                midPoint = (previous .+ current)/2
-                push!(bufferCurves, BufferCurve(start..., previous..., midPoint...))
-                start = midPoint
-                control = midPoint
+                # Create virtual on point
+                mid = makeMidpoint(previous, current)
+                push!(bufferCurves, makeCurve(start, previous, mid))
+                start = mid
+                control = mid
             end
         end
         previous = current
         previousTag = currentTag
     end
 
+    # Close the contour
     if previousTag == FT_CURVE_TAG_CUBIC
         b0 = start
         b1 = control
@@ -176,16 +200,16 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
 
         c0 = b0 .+ 0.75f0*(b1 .- b0)
         c1 = b3 .+ 0.75f0*(b2 .- b3)
+        d = makeMidpoint(c0, c1)
 
-        d = (c0 .+ c1)/2
-
-        push!(bufferCurves, BufferCurve(b0..., c0..., d...))
-        push!(bufferCurves, BufferCurve(d..., c1..., b3...))
+        push!(bufferCurves, makeCurve(b0, c0, d))
+        push!(bufferCurves, makeCurve(d, c1, b3))
     elseif previousTag == FT_CURVE_TAG_ON
-        midPoint = (previous .+ first)/2
-        push!(bufferCurves, BufferCurve(previous..., midPoint..., first...))
+        # Linear segment
+        push!(bufferCurves, makeCurve(previous, makeMidpoint(previous, first), first))
     else
-        push!(bufferCurves, BufferCurve(start..., previous..., first...))
+        # Regular bezier curve
+        push!(bufferCurves, makeCurve(start, previous, first))
     end
 end
 
