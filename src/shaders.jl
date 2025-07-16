@@ -60,8 +60,8 @@ end
 function getFragmentShader()::String
     # return getSimpleTestShader()  # Use simple test shader first
     # return getDebugFragmentShader()  # Use debug shader for UV visualization
-    return getDebugCoverageShader()  # Debug coverage calculation
-    # return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
+    # return getDebugCoverageShader()  # Debug coverage calculation
+    return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
 end
 
 # Simple test shader that shows solid colors per character
