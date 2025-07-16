@@ -162,6 +162,18 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     let inverseDiameter = 1.0 / (uniforms.antiAliasingWindowSize * fwidth(input.uv));
     
     let glyph = glyphs[input.bufferIndex];
+    
+    // Debug: Check if we have any curves at all
+    if (glyph.count == 0u) {
+        // No curves for this glyph, show blue
+        return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+    }
+    
+    // Debug: Show purple if we have curves
+    if (glyph.count > 0u) {
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
     for (var i = 0u; i < glyph.count; i += 1u) {
         let curveIndex = glyph.start + i;
         if (curveIndex >= arrayLength(&curves)) {
@@ -188,11 +200,14 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     
     alpha = clamp(alpha, 0.0, 1.0);
     
-    // The alpha should be inverted for proper text rendering
-    alpha = 1.0 - alpha;
-    
-    // Use the font color with calculated alpha
-    return vec4<f32>(uniforms.color.rgb, alpha);
+    // Debug: Show what's happening with coverage
+    if (alpha > 0.0) {
+        // If we have any coverage, show it as red
+        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    } else {
+        // No coverage, show as green
+        return vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    }
 }
 
 fn computeCoverage(
