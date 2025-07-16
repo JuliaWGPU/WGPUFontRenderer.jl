@@ -325,7 +325,8 @@ function normalizeCurves(renderer::FontRenderer, bufferGlyphs::Vector{BufferGlyp
 end
 
 function createGPUBuffers(renderer::FontRenderer)
-    # Create glyph buffer using BufferGlyph type
+    # Create glyph buffer using BufferGlyph type from global buffer
+    # The global bufferGlyphs contains the mapping from glyphs to curves
     if !isempty(bufferGlyphs)
         glyphBytes = Vector{UInt8}(undef, sizeof(BufferGlyph) * length(bufferGlyphs))
         ptr = Ptr{BufferGlyph}(pointer(glyphBytes))
