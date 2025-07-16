@@ -225,12 +225,13 @@ end
 function generateVertexData(renderer::FontRenderer, text::String)
     empty!(renderer.vertices)
     
-# Scale adjusted for consistent text sizing
-    scale = 0.005f0  # Adjust scale for text
+    # Use screen coordinates with proper scaling
+    # Assuming font size of 64 units, scale to reasonable screen size
+    scale = 0.5f0  # Much smaller scale factor for font size
     
-    # Start from center of screen for better visibility
-    xOffset = -0.2f0  # Start from center-left
-    yOffset = 0.0f0   # Center vertically
+    # Start from reasonable screen position
+    xOffset = 50.0f0   # Start from left margin
+    yOffset = 300.0f0  # Center vertically (screen height is 600)
     
     println("Generating vertex data for text: \"$text\"")
     
@@ -388,12 +389,12 @@ function createGPUBuffers(renderer::FontRenderer)
     near = -1.0f0
     far = 1.0f0
     
-    # Column-major orthographic projection matrix
+    # Column-major orthographic projection matrix (WGSL format)
     ortho = (
-        2.0f0 / (right - left), 0.0f0, 0.0f0, -(right + left) / (right - left),
-        0.0f0, 2.0f0 / (top - bottom), 0.0f0, -(top + bottom) / (top - bottom),
-        0.0f0, 0.0f0, -2.0f0 / (far - near), -(far + near) / (far - near),
-        0.0f0, 0.0f0, 0.0f0, 1.0f0
+        2.0f0 / (right - left), 0.0f0, 0.0f0, 0.0f0,
+        0.0f0, 2.0f0 / (top - bottom), 0.0f0, 0.0f0,
+        0.0f0, 0.0f0, -2.0f0 / (far - near), 0.0f0,
+        -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1.0f0
     )
     
     uniforms = FontUniforms(
