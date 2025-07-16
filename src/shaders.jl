@@ -188,13 +188,15 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     
     alpha = clamp(alpha, 0.0, 1.0);
     
-    // Fix inverted text by inverting the alpha value
-    alpha = 1.0 - alpha;
+    // Fix inverted text by inverting the alpha value. Ensure that rendered glyphs appear correctly.
+    if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
+        alpha = 1.0 - alpha; 
+    }
     
     // Debug: Show alpha as grayscale to understand coverage
-    // return vec4<f32>(alpha, alpha, alpha, 1.0);
     
-    return uniforms.color * alpha;
+    // For debugging, output alpha as grayscale to analyze.
+    return vec4<f32>(alpha, alpha, alpha, 1.0);
 }
 
 fn computeCoverage(
@@ -218,10 +220,10 @@ fn computeCoverage(
     
     if (abs(a.y) >= 1e-5) {
         // Quadratic segment, solve abc formula to find roots.
-        let radicand = b.y * b.y - a.y * c.y;
-        if (radicand <= 0.0) { return 0.0; }
+        let radicand = b.y * b.y - a.x * c.x * (-1);
+        let correctedRadicand = max(0.0, radicand);  // Ensure it's non-negative for sqrt
         
-        let s = sqrt(radicand);
+        let s = sqrt(correctedRadicand);
         t0 = (b.y - s) / a.y;
         t1 = (b.y + s) / a.y;
     } else {
