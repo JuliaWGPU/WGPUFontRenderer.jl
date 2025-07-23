@@ -15,7 +15,7 @@ export FontRenderer, BufferGlyph, BufferCurve, BufferVertex, Glyph, FontUniforms
 
 # Export main functions
 export prepareGlyphsForText, createFontRenderer, renderText, loadFontData
-export getVertexShader, getFragmentShader
+export getVertexShader, getFragmentShader, getNoSuperSamplingShader
 export initializeRenderer, generateVertexData
 export createGPUBuffers, createBindGroup
 

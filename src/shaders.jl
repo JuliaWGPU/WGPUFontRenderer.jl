@@ -58,8 +58,14 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 end
 
 function getFragmentShader()::String
-    # Use the exact reference implementation from gpu-font-rendering
-    return getReferenceFragmentShader()
+    # Use coordinate scaling fix shader to address horizontal line artifacts
+    return getCoordinateScalingFixShader()
+    
+    # Previous debug: 
+    # return getNoSuperSamplingShader()
+    
+    # Original: Use the exact reference implementation from gpu-font-rendering
+    # return getReferenceFragmentShader()
 end
 
 # Simple test shader that shows solid colors per character
@@ -636,6 +642,120 @@ end
 
 # EXACT reference implementation from gpu-font-rendering
 # Translated directly from the OpenGL fragment shader
+function getNoSuperSamplingShader()::String
+    return """
+// Debug shader with super-sampling DISABLED to isolate horizontal line artifacts
+// This removes the potential source of instability from the rotated ray sampling
+
+struct Glyph {
+    start: u32,
+    count: u32,
+}
+
+struct Curve {
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    p2: vec2<f32>,
+}
+
+struct FontUniforms {
+    color: vec4<f32>,
+    projection: mat4x4<f32>,
+    antiAliasingWindowSize: f32,
+    enableSuperSamplingAntiAliasing: u32,
+    padding: vec2<u32>,
+}
+
+struct FragmentInput {
+    @location(0) uv: vec2<f32>,
+    @location(1) bufferIndex: i32,
+}
+
+@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
+@group(0) @binding(1) var<storage, read> curves: array<Curve>;
+@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
+
+@fragment
+fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    
+    var alpha = 0.0;
+    
+    // Use a MUCH simpler inverse diameter calculation
+    // This completely avoids fwidth approximation issues
+    let inverseDiameter = 1.0 / uniforms.antiAliasingWindowSize;
+    
+    let glyph = glyphs[input.bufferIndex];
+    
+    // Only use the main ray - NO super-sampling at all
+    for (var i = 0u; i < glyph.count; i += 1u) {
+        let curveIndex = glyph.start + i;
+        if (curveIndex >= arrayLength(&curves)) {
+            break;
+        }
+        
+        let curve = curves[curveIndex];
+        let p0 = curve.p0 - input.uv;
+        let p1 = curve.p1 - input.uv;
+        let p2 = curve.p2 - input.uv;
+        
+        // Use the exact same coverage calculation as reference but NO rotation
+        alpha += computeCoverage(inverseDiameter, p0, p1, p2);
+    }
+    
+    // NO averaging since we only have one sample
+    
+    alpha = clamp(alpha, 0.0, 1.0);
+    return uniforms.color * alpha;
+}
+
+fn computeCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
+    if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0.0; }
+    if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0.0; }
+    
+    let a = p0 - 2.0 * p1 + p2;
+    let b = p0 - p1;
+    let c = p0;
+    
+    var t0: f32;
+    var t1: f32;
+    if (abs(a.y) >= 1e-5) {
+        let radicand = b.y * b.y - a.y * c.y;
+        if (radicand <= 0.0) { return 0.0; }
+        
+        let s = sqrt(radicand);
+        t0 = (b.y - s) / a.y;
+        t1 = (b.y + s) / a.y;
+    } else {
+        let t = p0.y / (p0.y - p2.y);
+        if (p0.y < p2.y) {
+            t0 = -1.0;
+            t1 = t;
+        } else {
+            t0 = t;
+            t1 = -1.0;
+        }
+    }
+    
+    var alpha = 0.0;
+    
+    if (t0 >= 0.0 && t0 < 1.0) {
+        let x = (a.x * t0 - 2.0 * b.x) * t0 + c.x;
+        alpha += clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+    }
+    
+    if (t1 >= 0.0 && t1 < 1.0) {
+        let x = (a.x * t1 - 2.0 * b.x) * t1 + c.x;
+        alpha -= clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+    }
+    
+    return alpha;
+}
+"""
+end
+
 function getReferenceFragmentShader()::String
     return """
 // EXACT WGSL translation of gpu-font-rendering fragment shader
@@ -673,10 +793,21 @@ struct FragmentInput {
 fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     var alpha = 0.0;
     
-    // Simplified inverse diameter calculation to match reference behavior
-    // The reference implementation calculates: inverseDiameter = 1.0 / (antiAliasingWindowSize * fwidth(uv))
-    // We approximate this with a reasonable fixed value based on font scale
-    let inverseDiameter = 1.0 / uniforms.antiAliasingWindowSize;
+    // Proper fwidth approximation for WGSL
+    // The reference uses: vec2 inverseDiameter = 1.0 / (antiAliasingWindowSize * fwidth(uv))
+    // We need to approximate fwidth(uv) based on the font scale and pixel size
+    
+    // Debug: Use much simpler inverse diameter calculation to eliminate coordinate space issues
+    // The horizontal lines suggest a scaling problem with the fwidth approximation
+    
+    // Try direct scaling based on font units to screen pixels
+    // Font units are ~2000, screen scale is 0.05, so 1 font unit = 0.05 screen pixels
+    // Therefore 1 screen pixel = 20 font units
+    let pixelSizeInFontUnits = 20.0; // 1/0.05
+    
+    // Use a much larger anti-aliasing window to reduce sensitivity to numerical precision
+    let inverseDiameterX = 1.0 / (uniforms.antiAliasingWindowSize * pixelSizeInFontUnits);
+    let inverseDiameterY = inverseDiameterX; // Use same value for both directions initially
     
     if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -695,9 +826,9 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
         let p1 = curve.p1 - input.uv;
         let p2 = curve.p2 - input.uv;
         
-        alpha += computeCoverage(inverseDiameter, p0, p1, p2);
+        alpha += computeCoverage(inverseDiameterX, p0, p1, p2);
         if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-            alpha += computeCoverage(inverseDiameter, rotate(p0), rotate(p1), rotate(p2));
+            alpha += computeCoverage(inverseDiameterY, rotate(p0), rotate(p1), rotate(p2));
         }
     }
     
