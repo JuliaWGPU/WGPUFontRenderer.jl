@@ -756,6 +756,166 @@ fn computeCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<
 """
 end
 
+# Coordinate scaling fix shader to eliminate horizontal line artifacts
+function getCoordinateScalingFixShader()::String
+    return """
+// Coordinate scaling fix shader to eliminate horizontal line artifacts
+// Based on diagnostic results: horizontal lines persist even without super-sampling,
+// indicating the issue is in coordinate space scaling rather than rotated ray calculations
+
+struct Glyph {
+    start: u32,
+    count: u32,
+}
+
+struct Curve {
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    p2: vec2<f32>,
+}
+
+struct FontUniforms {
+    color: vec4<f32>,
+    projection: mat4x4<f32>,
+    antiAliasingWindowSize: f32,
+    enableSuperSamplingAntiAliasing: u32,
+    padding: vec2<u32>,
+}
+
+struct FragmentInput {
+    @location(0) uv: vec2<f32>,
+    @location(1) bufferIndex: i32,
+}
+
+@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
+@group(0) @binding(1) var<storage, read> curves: array<Curve>;
+@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
+
+@fragment
+fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    
+    var alpha = 0.0;
+    
+    // COORDINATE SCALING FIX:
+    // The horizontal lines are caused by incorrect scaling between font units and pixels
+    // Font units: ~2000, Screen scale: 0.05 → 1 font unit = 0.05 screen pixels
+    // This means 1 screen pixel = 20 font units
+    
+    // Instead of using a direct inverseDiameter calculation, we need to account
+    // for the fact that our UVs are in font units but our anti-aliasing window
+    // should be in screen/pixel coordinates
+    
+    // Calculate proper scaling factor
+    let fontToScreenScale = 0.05;  // This matches the scale used in vertex generation
+    let screenToFontScale = 1.0 / fontToScreenScale;  // 20.0
+    
+    // The anti-aliasing window size should be scaled to font units
+    // A smaller value here = more anti-aliasing, larger = sharper edges
+    let scaledAntiAliasingWindow = uniforms.antiAliasingWindowSize * screenToFontScale;
+    
+    // Use a more conservative scaling to reduce numerical precision issues
+    let inverseDiameter = 1.0 / max(scaledAntiAliasingWindow, 10.0);
+    
+    let glyph = glyphs[input.bufferIndex];
+    
+    // Process each curve with improved coordinate handling
+    for (var i = 0u; i < glyph.count; i += 1u) {
+        let curveIndex = glyph.start + i;
+        if (curveIndex >= arrayLength(&curves)) {
+            break;
+        }
+        
+        let curve = curves[curveIndex];
+        let p0 = curve.p0 - input.uv;
+        let p1 = curve.p1 - input.uv;
+        let p2 = curve.p2 - input.uv;
+        
+        // Use improved coverage calculation with better numerical stability
+        alpha += computeScaledCoverage(inverseDiameter, p0, p1, p2);
+    }
+    
+    // Clamp to valid range
+    alpha = clamp(alpha, 0.0, 1.0);
+    return uniforms.color * alpha;
+}
+
+// Improved coverage calculation with better handling of coordinate scaling
+fn computeScaledCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
+    // More robust early exit conditions
+    let epsilon = 0.001;  // Slightly larger epsilon to handle font unit precision
+    if (p0.y > epsilon && p1.y > epsilon && p2.y > epsilon) { return 0.0; }
+    if (p0.y < -epsilon && p1.y < -epsilon && p2.y < -epsilon) { return 0.0; }
+    
+    let a = p0 - 2.0 * p1 + p2;
+    let b = p0 - p1;
+    let c = p0;
+    
+    var t0: f32;
+    var t1: f32;
+    
+    // Use a more conservative epsilon for numerical stability in font units
+    let numerical_epsilon = 1e-3;  // Larger epsilon for font unit calculations
+    
+    if (abs(a.y) >= numerical_epsilon) {
+        let discriminant = b.y * b.y - a.y * c.y;
+        if (discriminant <= 0.0) { return 0.0; }
+        
+        let s = sqrt(discriminant);
+        t0 = (b.y - s) / a.y;
+        t1 = (b.y + s) / a.y;
+        
+        // Ensure proper ordering
+        if (t0 > t1) {
+            let temp = t0;
+            t0 = t1;
+            t1 = temp;
+        }
+    } else {
+        // Linear case - handle with better numerical stability
+        let denom = p0.y - p2.y;
+        if (abs(denom) < numerical_epsilon) { return 0.0; }
+        
+        let t = p0.y / denom;
+        if (p0.y < p2.y) {
+            t0 = -1.0;
+            t1 = t;
+        } else {
+            t0 = t;
+            t1 = -1.0;
+        }
+    }
+    
+    var alpha = 0.0;
+    
+    // Process intersections with tighter bounds checking
+    let bounds_epsilon = 1e-6;
+    
+    if (t0 >= -bounds_epsilon && t0 < 1.0 + bounds_epsilon) {
+        let clamped_t0 = clamp(t0, 0.0, 1.0);
+        let x = (a.x * clamped_t0 - 2.0 * b.x) * clamped_t0 + c.x;
+        
+        // Apply anti-aliasing with improved scaling
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha += contribution;
+    }
+    
+    if (t1 >= -bounds_epsilon && t1 < 1.0 + bounds_epsilon) {
+        let clamped_t1 = clamp(t1, 0.0, 1.0);
+        let x = (a.x * clamped_t1 - 2.0 * b.x) * clamped_t1 + c.x;
+        
+        // Apply anti-aliasing with improved scaling
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha -= contribution;
+    }
+    
+    return alpha;
+}
+"""
+end
+
 function getReferenceFragmentShader()::String
     return """
 // EXACT WGSL translation of gpu-font-rendering fragment shader
