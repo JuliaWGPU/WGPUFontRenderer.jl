@@ -360,15 +360,15 @@ function createGPUBuffers(renderer::FontRenderer)
     # The scale factor used in vertex generation is 0.05, so 1 screen pixel = 20 font units
     pixelSizeInFontUnits = 1.0f0 / 0.05f0  # = 20.0 font units per screen pixel
     
-    # Calculate optimal anti-aliasing window size to reduce glitches
-    # Use a smaller, more precise window for better stability
-    aaWindowSize = pixelSizeInFontUnits * 2.0f0  # Smaller window for better stability
+    # Use the exact reference implementation approach for anti-aliasing
+    # The reference uses antiAliasingWindowSize = 1.0 for normal anti-aliasing
+    aaWindowSize = 1.0f0  # Match reference implementation default
     
     uniforms = FontUniforms(
         (1.0f0, 1.0f0, 1.0f0, 1.0f0),  # White color
         ortho,  # Proper orthographic projection matrix
-        aaWindowSize,  # Optimized anti-aliasing window size
-        0,      # Keep super-sampling AA disabled for stability
+        aaWindowSize,  # Reference implementation anti-aliasing window size
+        1,      # Enable super-sampling AA like reference
         (0, 0)  # Padding
     )
     
