@@ -58,10 +58,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 end
 
 function getFragmentShader()::String
-    # return getSimpleTestShader()  # Use simple test shader first
-    # return getDebugFragmentShader()  # Use debug shader for UV visualization
-    # return getDebugCoverageShader()  # Debug coverage calculation
-    return getComplexFragmentShader()  # Use complex shader for proper vector font rendering
+    # Use the stable coverage shader to reduce glitches
+    return getStableCoverageShader()  # Use stable coverage calculation with improved numerics
 end
 
 # Simple test shader that shows solid colors per character
@@ -229,11 +227,9 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     
     var alpha = 0.0;
     
-    // Calculate inverse diameter for anti-aliasing using derivatives
-    // This mimics the fwidth() function behavior from the reference
-    let duvdx = dpdx(input.uv);
-    let duvdy = dpdy(input.uv);
-    let inverseDiameter = 1.0 / (uniforms.antiAliasingWindowSize * vec2<f32>(length(duvdx), length(duvdy)));
+    // Use a simple fixed anti-aliasing value to isolate horizontal line issues
+    // This eliminates potential derivative calculation problems
+    let inverseDiameter = 1.0 / uniforms.antiAliasingWindowSize;
     
     let glyph = glyphs[input.bufferIndex];
     
@@ -251,7 +247,7 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
         let p2 = curve.p2 - input.uv;
         
         // Calculate coverage for this curve
-        alpha += computeCoverage(inverseDiameter.x, p0, p1, p2);
+        alpha += computeCoverage(inverseDiameter, p0, p1, p2);
         
         // Apply super-sampling anti-aliasing if enabled
         if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
@@ -260,7 +256,7 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
             let rp1 = vec2<f32>(p1.y, -p1.x);
             let rp2 = vec2<f32>(p2.y, -p2.x);
             
-            alpha += computeCoverage(inverseDiameter.y, rp0, rp1, rp2);
+            alpha += computeCoverage(inverseDiameter, rp0, rp1, rp2);
         }
     }
     
@@ -333,6 +329,162 @@ fn computeCoverage(
     }
     
     return alpha;  // Don't clamp here, let the caller handle final clamping
+}
+"""
+end
+
+# Stable coverage shader with improved numerical precision
+function getStableCoverageShader()::String
+    return """
+// Stable fragment shader for font rendering with reduced artifacts
+// Based on the reference gpu-font-rendering implementation
+
+struct Glyph {
+    start: u32,
+    count: u32,
+}
+
+struct Curve {
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    p2: vec2<f32>,
+}
+
+struct FontUniforms {
+    color: vec4<f32>,
+    projection: mat4x4<f32>,
+    antiAliasingWindowSize: f32,
+    enableSuperSamplingAntiAliasing: u32,
+    padding: vec2<u32>,
+}
+
+struct FragmentInput {
+    @location(0) uv: vec2<f32>,
+    @location(1) bufferIndex: i32,
+}
+
+@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
+@group(0) @binding(1) var<storage, read> curves: array<Curve>;
+@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
+
+@fragment
+fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    
+    var alpha = 0.0;
+    
+    // Use a conservative anti-aliasing window size
+    let inverseDiameter = 1.0 / max(uniforms.antiAliasingWindowSize, 1.0);
+    
+    let glyph = glyphs[input.bufferIndex];
+    
+    // Only process curves that could potentially contribute
+    for (var i = 0u; i < glyph.count; i += 1u) {
+        let curveIndex = glyph.start + i;
+        if (curveIndex >= arrayLength(&curves)) {
+            break;
+        }
+        
+        let curve = curves[curveIndex];
+        
+        // Transform curve control points by subtracting sample position
+        let p0 = curve.p0 - input.uv;
+        let p1 = curve.p1 - input.uv;
+        let p2 = curve.p2 - input.uv;
+        
+        // Calculate coverage for this curve with improved stability
+        alpha += computeStableCoverage(inverseDiameter, p0, p1, p2);
+    }
+    
+    // Clamp final alpha to valid range
+    alpha = clamp(alpha, 0.0, 1.0);
+    
+    // Return final color with proper alpha blending
+    return vec4<f32>(uniforms.color.rgb, uniforms.color.a * alpha);
+}
+
+fn computeStableCoverage(
+    inverseDiameter: f32,
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    p2: vec2<f32>
+) -> f32 {
+    // More aggressive early exit if curve is entirely above or below the ray
+    if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0.0; }
+    if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0.0; }
+    
+    // Quadratic Bezier curve coefficients
+    let a = p0 - 2.0 * p1 + p2;
+    let b = p0 - p1;
+    let c = p0;
+    
+    var t0 = -1.0;
+    var t1 = -1.0;
+    
+    // More robust numerical handling with better epsilon values
+    let eps = 1e-8;  // Tighter epsilon for better precision
+    
+    if (abs(a.y) > eps) {
+        // Quadratic case - use numerically stable quadratic formula
+        let discriminant = b.y * b.y - a.y * c.y;
+        if (discriminant > eps) {  // Avoid near-zero discriminants
+            let sqrtDisc = sqrt(discriminant);
+            // Use the numerically stable version of quadratic formula
+            if (b.y >= 0.0) {
+                let q = -(b.y + sqrtDisc);
+                t0 = q / a.y;
+                t1 = c.y / q;
+            } else {
+                let q = -(b.y - sqrtDisc);
+                t0 = c.y / q;
+                t1 = q / a.y;
+            }
+            
+            // Ensure proper ordering
+            if (t0 > t1) {
+                let temp = t0;
+                t0 = t1;
+                t1 = temp;
+            }
+        }
+    } else {
+        // Linear case - more robust handling
+        let denomY = p0.y - p2.y;
+        if (abs(denomY) > eps) {
+            let t = p0.y / denomY;
+            if (t >= 0.0 && t <= 1.0) {
+                if (p0.y < p2.y) {
+                    t1 = t;
+                } else {
+                    t0 = t;
+                }
+            }
+        }
+    }
+    
+    var alpha = 0.0;
+    
+    // Process intersections with more stable evaluation and bounds checking
+    if (t0 >= -1e-6 && t0 <= 1.0 + 1e-6) {  // Slightly relaxed bounds to avoid edge artifacts
+        let x = evaluateQuadraticX(a.x, b.x, c.x, clamp(t0, 0.0, 1.0));
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha += contribution;
+    }
+    
+    if (t1 >= -1e-6 && t1 <= 1.0 + 1e-6) {  // Slightly relaxed bounds to avoid edge artifacts
+        let x = evaluateQuadraticX(a.x, b.x, c.x, clamp(t1, 0.0, 1.0));
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha -= contribution;
+    }
+    
+    return alpha;
+}
+
+fn evaluateQuadraticX(a: f32, b: f32, c: f32, t: f32) -> f32 {
+    // Use Horner's method for better numerical stability
+    return (a * t - 2.0 * b) * t + c;
 }
 """
 end
