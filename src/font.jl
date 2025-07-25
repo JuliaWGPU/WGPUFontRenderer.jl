@@ -74,17 +74,18 @@ function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
         # contours[contourIdx] is 0-based from C, so we add 1 for Julia
         convertContour(curves, glyph.outline, start + 1, contours[contourIdx] + 1)
         start = contours[contourIdx] + 1
-        @info start
+        # Debug info commented out to prevent log overflow
     end
 
     glyphCount = UInt32((curves |> length) - glyphStart)
     bufferGlyph = BufferGlyph(glyphStart, glyphCount)
-    bufferIdx = bufferGlyphs |> length
+    # Fix: Use 0-based indexing for buffer index (Julia length gives count, but shader expects 0-based)
+    bufferIdx = bufferGlyphs |> length  # This is the correct 0-based index
     push!(bufferGlyphs, bufferGlyph)
 
     glyph = Glyph(
         UInt32(glyphIdx),
-        Int32(bufferIdx),
+        Int32(bufferIdx),  # Now correctly 0-based for shader
         Int32(glyphCount),
         Int32(glyph.metrics.width),
         Int32(glyph.metrics.height),
@@ -266,7 +267,7 @@ function prepareGlyphsForText(str::String)
 
     # Store the font's emSize globally
     global fontEmSize = face.units_per_EM
-    println("Font emSize: ", fontEmSize)
+    # Debug output disabled
 
     # Use FT_LOAD_NO_SCALE to get font units directly (like the reference implementation)
     loadFlags = FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP

@@ -58,14 +58,15 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 end
 
 function getFragmentShader()::String
-    # Use coordinate scaling fix shader to address horizontal line artifacts
-    return getCoordinateScalingFixShader()
+    # Use simple test shader to isolate artifacts
+    return getReferenceFragmentShader()
     
-    # Previous debug: 
-    # return getNoSuperSamplingShader()
-    
-    # Original: Use the exact reference implementation from gpu-font-rendering
-    # return getReferenceFragmentShader()
+    # Previous attempts that had line artifacts:
+    # return getNoSuperSamplingShader()         # Still had lines  
+    # return getReferenceFragmentShader()       # EXACT reference - had lines
+    # return getStableCoverageShader()          # Had glitches
+    # return getFineTunedCoordinateFixShader()  # Had glitches  
+    # return getCoordinateScalingFixShader()    # Caused letter cutoff
 end
 
 # Simple test shader that shows solid colors per character
@@ -916,6 +917,152 @@ fn computeScaledCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2:
 """
 end
 
+# Fine-tuned coordinate scaling fix to prevent letter cutoff while maintaining horizontal line fix
+function getFineTunedCoordinateFixShader()::String
+    return """
+// Fine-tuned coordinate scaling fix shader
+// Fixes horizontal line artifacts while preventing letter cutoff
+// Based on analysis: horizontal lines fixed but conservative min anti-aliasing caused letter cutoff
+
+struct Glyph {
+    start: u32,
+    count: u32,
+}
+
+struct Curve {
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    p2: vec2<f32>,
+}
+
+struct FontUniforms {
+    color: vec4<f32>,
+    projection: mat4x4<f32>,
+    antiAliasingWindowSize: f32,
+    enableSuperSamplingAntiAliasing: u32,
+    padding: vec2<u32>,
+}
+
+struct FragmentInput {
+    @location(0) uv: vec2<f32>,
+    @location(1) bufferIndex: i32,
+}
+
+@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
+@group(0) @binding(1) var<storage, read> curves: array<Curve>;
+@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
+
+@fragment
+fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    
+    var alpha = 0.0;
+    
+    // FINE-TUNED COORDINATE SCALING:
+    // Keep the coordinate space fix but reduce the conservative minimum
+    // to prevent letter cutoff while maintaining horizontal line fix
+    
+    let fontToScreenScale = 0.05;
+    let screenToFontScale = 20.0;  // 1.0 / 0.05
+    
+    // Scale anti-aliasing window to font units
+    let scaledAntiAliasingWindow = uniforms.antiAliasingWindowSize * screenToFontScale;
+    
+    // REDUCED minimum from 10.0 to 2.0 to prevent letter cutoff
+    // This should still prevent horizontal lines but allow more letter detail
+    let inverseDiameter = 1.0 / max(scaledAntiAliasingWindow, 2.0);
+    
+    let glyph = glyphs[input.bufferIndex];
+    
+    for (var i = 0u; i < glyph.count; i += 1u) {
+        let curveIndex = glyph.start + i;
+        if (curveIndex >= arrayLength(&curves)) {
+            break;
+        }
+        
+        let curve = curves[curveIndex];
+        let p0 = curve.p0 - input.uv;
+        let p1 = curve.p1 - input.uv;
+        let p2 = curve.p2 - input.uv;
+        
+        // Use balanced coverage calculation
+        alpha += computeBalancedCoverage(inverseDiameter, p0, p1, p2);
+    }
+    
+    alpha = clamp(alpha, 0.0, 1.0);
+    return uniforms.color * alpha;
+}
+
+// Balanced coverage calculation that prevents both horizontal lines and letter cutoff
+fn computeBalancedCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
+    // Use smaller epsilon values to preserve letter detail
+    let epsilon = 0.0001;  // Reduced from 0.001 to preserve fine details
+    if (p0.y > epsilon && p1.y > epsilon && p2.y > epsilon) { return 0.0; }
+    if (p0.y < -epsilon && p1.y < -epsilon && p2.y < -epsilon) { return 0.0; }
+    
+    let a = p0 - 2.0 * p1 + p2;
+    let b = p0 - p1;
+    let c = p0;
+    
+    var t0: f32;
+    var t1: f32;
+    
+    // Use more precise epsilon for better letter detail
+    let numerical_epsilon = 1e-6;  // Reduced from 1e-3 for better precision
+    
+    if (abs(a.y) >= numerical_epsilon) {
+        let discriminant = b.y * b.y - a.y * c.y;
+        if (discriminant <= 0.0) { return 0.0; }
+        
+        let s = sqrt(discriminant);
+        t0 = (b.y - s) / a.y;
+        t1 = (b.y + s) / a.y;
+        
+        if (t0 > t1) {
+            let temp = t0;
+            t0 = t1;
+            t1 = temp;
+        }
+    } else {
+        let denom = p0.y - p2.y;
+        if (abs(denom) < numerical_epsilon) { return 0.0; }
+        
+        let t = p0.y / denom;
+        if (p0.y < p2.y) {
+            t0 = -1.0;
+            t1 = t;
+        } else {
+            t0 = t;
+            t1 = -1.0;
+        }
+    }
+    
+    var alpha = 0.0;
+    
+    // Use tighter bounds for better precision
+    let bounds_epsilon = 1e-8;  // Tighter bounds for better letter detail
+    
+    if (t0 >= -bounds_epsilon && t0 < 1.0 + bounds_epsilon) {
+        let clamped_t0 = clamp(t0, 0.0, 1.0);
+        let x = (a.x * clamped_t0 - 2.0 * b.x) * clamped_t0 + c.x;
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha += contribution;
+    }
+    
+    if (t1 >= -bounds_epsilon && t1 < 1.0 + bounds_epsilon) {
+        let clamped_t1 = clamp(t1, 0.0, 1.0);
+        let x = (a.x * clamped_t1 - 2.0 * b.x) * clamped_t1 + c.x;
+        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha -= contribution;
+    }
+    
+    return alpha;
+}
+"""
+end
+
 function getReferenceFragmentShader()::String
     return """
 // EXACT WGSL translation of gpu-font-rendering fragment shader
@@ -951,6 +1098,14 @@ struct FragmentInput {
 
 @fragment
 fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    // Check for bounding box visualizations
+    if (input.bufferIndex == -1) {
+        return vec4<f32>(1.0, 0.0, 0.0, 0.3); // Red text quad bounding box with transparency
+    }
+    if (input.bufferIndex == -2) {
+        return vec4<f32>(0.0, 0.0, 1.0, 0.2); // Blue text block bounding box with transparency
+    }
+    
     var alpha = 0.0;
     
     // Proper fwidth approximation for WGSL
@@ -961,9 +1116,9 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     // The horizontal lines suggest a scaling problem with the fwidth approximation
     
     // Try direct scaling based on font units to screen pixels
-    // Font units are ~2000, screen scale is 0.05, so 1 font unit = 0.05 screen pixels
-    // Therefore 1 screen pixel = 20 font units
-    let pixelSizeInFontUnits = 20.0; // 1/0.05
+    // Font units are ~2000, screen scale is 0.01, so 1 font unit = 0.01 screen pixels
+    // Therefore 1 screen pixel = 100 font units
+    let pixelSizeInFontUnits = 100.0; // 1/0.01
     
     // Use a much larger anti-aliasing window to reduce sensitivity to numerical precision
     let inverseDiameterX = 1.0 / (uniforms.antiAliasingWindowSize * pixelSizeInFontUnits);
