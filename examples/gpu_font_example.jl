@@ -2,6 +2,7 @@
 # This example demonstrates vector font rendering using WGPUCore and WGPUgfx
 
 using WGPUCore
+using WGPUNative
 using WGPUCanvas
 using WGPUFontRenderer
 using GLFW
@@ -13,6 +14,8 @@ mutable struct FontDemoApp
     queue::WGPUCore.GPUQueue
     fontRenderer::FontRenderer
     textToRender::String
+    depthTexture::Union{WGPUCore.GPUTexture, Nothing}
+    depthTextureView::Union{WGPUCore.GPUTextureView, Nothing}
     
     function FontDemoApp()
         new()
@@ -40,13 +43,38 @@ function init_app(app::FontDemoApp)
     # Initialize renderer with surface format
     initializeRenderer(app.fontRenderer, surfaceFormat)
     
-    # Set demo text
-    app.textToRender = "Hello GPU Font Rendering!"
+    # Set demo text - just "Hello" for cleaner debug visualization
+    app.textToRender = "Hello"
     
     # Load font data for text - following gpu-font-renderer pattern
     loadFontData(app.fontRenderer, app.textToRender)
     
+    # Initialize depth texture fields
+    app.depthTexture = nothing
+    app.depthTextureView = nothing
+    
     return app
+end
+
+function cleanup_app(app::FontDemoApp)
+    # Clean up depth texture resources
+    if app.depthTextureView !== nothing
+        try
+            WGPUCore.destroy(app.depthTextureView)
+        catch e
+            @warn "Error destroying depth texture view: $e"
+        end
+        app.depthTextureView = nothing
+    end
+    
+    if app.depthTexture !== nothing
+        try
+            WGPUCore.destroy(app.depthTexture)
+        catch e
+            @warn "Error destroying depth texture: $e"
+        end
+        app.depthTexture = nothing
+    end
 end
 
 function render_frame(app::FontDemoApp)
@@ -58,20 +86,52 @@ function render_frame(app::FontDemoApp)
         # Create command encoder
         cmdEncoder = WGPUCore.createCommandEncoder(app.device, "Font Demo Encoder")
         
-        # Create render pass - try simpler approach
+        # Get current canvas size dynamically
+        canvasSize = app.canvas.size
+        
+        # Create depth texture if needed (simplified - always create for now)
+        if app.depthTexture === nothing || app.depthTextureView === nothing
+            # Create depth texture with current canvas size
+            app.depthTexture = WGPUCore.createTexture(
+                app.device,
+                "Depth Texture",
+                (canvasSize[1], canvasSize[2], 1),
+                1, 1,
+                WGPUCore.WGPUTextureDimension_2D, 
+                WGPUNative.LibWGPU.WGPUTextureFormat_Depth24Plus,
+                WGPUCore.getEnum(WGPUCore.WGPUTextureUsage, ["RenderAttachment"])
+            )
+            
+            # Create depth texture view
+            app.depthTextureView = WGPUCore.createView(app.depthTexture)
+        end
+        
+        # Create render pass with depth stencil attachment
         renderPassOptions = [
             WGPUCore.GPUColorAttachments => [
                 :attachments => [
                     WGPUCore.GPUColorAttachment => [
                         :view => currentTextureView,
                         :resolveTarget => C_NULL,
-                        :clearValue => (0.1, 0.1, 0.1, 1.0),  # Dark gray background
+                        :clearValue => (0.9, 0.9, 0.9, 1.0),  # Light gray background for better contrast
                                 :loadOp => WGPUCore.WGPULoadOp_Clear,
                                 :storeOp => WGPUCore.WGPUStoreOp_Store,
                     ],
                 ],
             ],
-            WGPUCore.GPUDepthStencilAttachments => [],
+            WGPUCore.GPUDepthStencilAttachments => [
+                :attachments => [
+                    WGPUCore.GPUDepthStencilAttachment => [
+                        :view => app.depthTextureView,
+                        :depthClearValue => 1.0,  # Clear to far plane
+                        :depthLoadOp => WGPUCore.WGPULoadOp_Clear,
+                        :depthStoreOp => WGPUCore.WGPUStoreOp_Store,
+                        :stencilClearValue => 0,
+                        :stencilLoadOp => WGPUCore.WGPULoadOp_Clear,
+                        :stencilStoreOp => WGPUCore.WGPUStoreOp_Store
+                    ],
+                ],
+            ],
         ]
         
         # Begin render pass
@@ -128,7 +188,8 @@ function run_demo()
     catch e
         println("Rendering loop interrupted: ", e)
     finally
-        # Cleanup
+        # Cleanup depth texture resources
+        cleanup_app(app)
         WGPUCore.destroyWindow(app.canvas)
         println("Demo completed")
     end

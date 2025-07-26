@@ -2,6 +2,7 @@
 # Based on: https://github.com/GreenLightning/gpu-font-rendering
 
 using WGPUCore
+using WGPUNative
 using FreeType
 
 # Font Renderer State - following gpu-font-renderer structure
@@ -148,14 +149,19 @@ function initializeRenderer(renderer::FontRenderer, surfaceFormat::Union{String,
                             :shaderLocation => 0
                         ],
                         WGPUCore.GPUVertexAttribute => [
-                            :format => "Float32x2",
+                            :format => "Float32",
                             :offset => 8,
                             :shaderLocation => 1
                         ],
                         WGPUCore.GPUVertexAttribute => [
-                            :format => "Sint32",
-                            :offset => 16,
+                            :format => "Float32x2",
+                            :offset => 12,
                             :shaderLocation => 2
+                        ],
+                        WGPUCore.GPUVertexAttribute => [
+                            :format => "Sint32",
+                            :offset => 20,
+                            :shaderLocation => 3
                         ]
                     ]
                 ]
@@ -178,7 +184,11 @@ function initializeRenderer(renderer::FontRenderer, surfaceFormat::Union{String,
             :cullMode => "None",
             :stripIndexFormat => "Undefined"
         ],
-        WGPUCore.GPUDepthStencilState => [],
+        WGPUCore.GPUDepthStencilState => [
+            :format => WGPUNative.LibWGPU.WGPUTextureFormat_Depth24Plus,
+            :depthWriteEnabled => true,
+            :depthCompare => WGPUNative.LibWGPU.WGPUCompareFunction_Less
+        ],
         WGPUCore.GPUMultiSampleState => [
             :count => 1,
             :mask => typemax(UInt32),
@@ -228,31 +238,31 @@ function generateVertexData(renderer::FontRenderer, text::String)
     # Use screen coordinates with proper scaling
     # Font has units per em (stored in fontEmSize), so we need to scale appropriately
     # This scale must match the coordinate space calculation in the shader
-    scale = 0.01f0  # 1 font unit = 0.01 screen pixels → 1 screen pixel = 100 font units
+    scale = 0.08f0  # Increased from 0.01f0 for maximum debug visibility (8x larger font)
     
-    # Define text block bounds for word wrap
+    # Define text block bounds for word wrap - expand for 8x larger font
     textBlockLeft = 10.0f0
-    textBlockTop = 30.0f0
-    textBlockRight = 400.0f0  # 400 pixels wide text block
-    textBlockBottom = 200.0f0  # 200 pixels tall text block
-    textBlockWidth = textBlockRight - textBlockLeft  # 390 pixels
-    textBlockHeight = textBlockBottom - textBlockTop  # 170 pixels
+    textBlockTop = 50.0f0
+    textBlockRight = 700.0f0  # Much wider text block for large font
+    textBlockBottom = 400.0f0  # Much taller text block for large font
+    textBlockWidth = textBlockRight - textBlockLeft  # 690 pixels
+    textBlockHeight = textBlockBottom - textBlockTop  # 350 pixels
     
     # Add text block bounding box visualization (bufferIndex = -2)
     # First triangle: bottom-left, bottom-right, top-left (counter-clockwise)
-    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockBottom, 0.0f0, 0.0f0, -2))  # Bottom-left
-    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockBottom, 0.0f0, 0.0f0, -2))  # Bottom-right
-    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.0f0, 0.0f0, -2))  # Top-left
+    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-left
+    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-right
+    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
     
     # Second triangle: bottom-right, top-right, top-left (counter-clockwise)
-    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockBottom, 0.0f0, 0.0f0, -2))  # Bottom-right
-    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockTop, 0.0f0, 0.0f0, -2))  # Top-right
-    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.0f0, 0.0f0, -2))  # Top-left
+    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-right
+    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-right
+    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
     
-    # Word wrap implementation
-    xOffset = textBlockLeft + 5.0f0   # Start with small left padding
-    yOffset = textBlockTop + 20.0f0   # Start with some top padding
-    lineHeight = 16.0f0  # Line height in pixels
+    # Word wrap implementation - position text to be clearly visible
+    xOffset = textBlockLeft + 20.0f0   # Start with padding
+    yOffset = textBlockTop + 100.0f0   # Position text well within viewport (150px from top)
+    lineHeight = 80.0f0  # Large line height for 8x font
     
     # Split text into words for proper word wrapping
     words = split(text, ' ')
@@ -307,24 +317,24 @@ function generateVertexData(renderer::FontRenderer, text::String)
 
                     # Draw bounding box around the text quad as a simple filled rectangle
                     # First triangle: bottom-left, bottom-right, top-left (counter-clockwise)
-                    push!(renderer.vertices, BufferVertex(x1, y1, u0, v0, -1))  # Bottom-left
-                    push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, -1))  # Bottom-right
-                    push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, -1))  # Top-left
+                    push!(renderer.vertices, BufferVertex(x1, y1, 0.5f0, u0, v0, -1))  # Bottom-left
+                    push!(renderer.vertices, BufferVertex(x2, y1, 0.5f0, u1, v0, -1))  # Bottom-right
+                    push!(renderer.vertices, BufferVertex(x1, y2, 0.5f0, u0, v1, -1))  # Top-left
                     
                     # Second triangle: bottom-right, top-right, top-left (counter-clockwise)
-                    push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, -1))  # Bottom-right
-                    push!(renderer.vertices, BufferVertex(x2, y2, u1, v1, -1))  # Top-right
-                    push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, -1))  # Top-left
+                    push!(renderer.vertices, BufferVertex(x2, y1, 0.5f0, u1, v0, -1))  # Bottom-right
+                    push!(renderer.vertices, BufferVertex(x2, y2, 0.5f0, u1, v1, -1))  # Top-right
+                    push!(renderer.vertices, BufferVertex(x1, y2, 0.5f0, u0, v1, -1))  # Top-left
 
                     # First triangle: bottom-left, bottom-right, top-left (counter-clockwise)
-                    push!(renderer.vertices, BufferVertex(x1, y1, u0, v0, glyph.bufferIndex))
-                    push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, glyph.bufferIndex))
-                    push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, glyph.bufferIndex))
+                    push!(renderer.vertices, BufferVertex(x1, y1, 0.0f0, u0, v0, glyph.bufferIndex))
+                    push!(renderer.vertices, BufferVertex(x2, y1, 0.0f0, u1, v0, glyph.bufferIndex))
+                    push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, u0, v1, glyph.bufferIndex))
                     
                     # Second triangle: bottom-right, top-right, top-left (counter-clockwise)
-                    push!(renderer.vertices, BufferVertex(x2, y1, u1, v0, glyph.bufferIndex))
-                    push!(renderer.vertices, BufferVertex(x2, y2, u1, v1, glyph.bufferIndex))
-                    push!(renderer.vertices, BufferVertex(x1, y2, u0, v1, glyph.bufferIndex))
+                    push!(renderer.vertices, BufferVertex(x2, y1, 0.0f0, u1, v0, glyph.bufferIndex))
+                    push!(renderer.vertices, BufferVertex(x2, y2, 0.0f0, u1, v1, glyph.bufferIndex))
+                    push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, u0, v1, glyph.bufferIndex))
                 end
                 
                 # Advance position for next character
@@ -365,6 +375,8 @@ function createGPUBuffers(renderer::FontRenderer)
     # Create glyph buffer using BufferGlyph type from global buffer
     # The global bufferGlyphs contains the mapping from glyphs to curves
     if !isempty(bufferGlyphs)
+        # println("DEBUG: Creating glyph buffer with $(length(bufferGlyphs)) glyphs")
+        
         glyphBytes = Vector{UInt8}(undef, sizeof(BufferGlyph) * length(bufferGlyphs))
         ptr = Ptr{BufferGlyph}(pointer(glyphBytes))
         unsafe_copyto!(ptr, pointer(bufferGlyphs), length(bufferGlyphs))
@@ -410,15 +422,15 @@ function createGPUBuffers(renderer::FontRenderer)
     )
     
     # Calculate appropriate anti-aliasing window size based on font scale
-    # The scale factor used in vertex generation is 0.02, so 1 screen pixel = 50 font units
-    pixelSizeInFontUnits = 1.0f0 / 0.02f0  # = 50.0 font units per screen pixel
+    # The scale factor used in vertex generation is 0.08, so 1 screen pixel = 12.5 font units
+    pixelSizeInFontUnits = 1.0f0 / 0.08f0  # = 12.5 font units per screen pixel
     
     # Use the exact reference implementation approach for anti-aliasing
     # The reference uses antiAliasingWindowSize = 1.0 for normal anti-aliasing
     aaWindowSize = 1.0f0  # Match reference implementation default
     
     uniforms = FontUniforms(
-        (1.0f0, 1.0f0, 1.0f0, 1.0f0),  # White color
+        (0.0f0, 0.0f0, 0.0f0, 1.0f0),  # Black color for visibility on light background
         ortho,  # Proper orthographic projection matrix
         aaWindowSize,  # Reference implementation anti-aliasing window size
         0,      # Disable super-sampling AA to fix horizontal/vertical lines

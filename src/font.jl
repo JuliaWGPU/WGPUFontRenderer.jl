@@ -47,6 +47,7 @@ end
 struct BufferVertex
     x::Float32
     y::Float32
+    z::Float32  # Depth coordinate for z-ordering
     u::Float32
     v::Float32
     bufferIndex::Int32
@@ -59,7 +60,12 @@ glyphs = Dict()
 function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
     # bufferCurves = BufferCurve[]
     faceRec = face |> unsafe_load
-    glyphStart = UInt32(curves |> length)
+    
+    # CRITICAL FIX: Store indices correctly for both Julia and GPU access
+    # For GPU: 0-based indexing is used
+    # For Julia: 1-based indexing is needed
+    glyphStartGPU = UInt32(curves |> length)  # 0-based for GPU
+    glyphStartJulia = glyphStartGPU + 1       # 1-based for Julia arrays
 
     # Start with 0-based indexing to match C++ reference implementation
     start = 0
@@ -77,15 +83,23 @@ function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
         # Debug info commented out to prevent log overflow
     end
 
-    glyphCount = UInt32((curves |> length) - glyphStart)
-    bufferGlyph = BufferGlyph(glyphStart, glyphCount)
-    # Fix: Use 0-based indexing for buffer index (Julia length gives count, but shader expects 0-based)
-    bufferIdx = bufferGlyphs |> length  # This is the correct 0-based index
+    glyphCount = UInt32((curves |> length) - glyphStartGPU)
+    
+    # Store GPU-compatible (0-based) indices in BufferGlyph for GPU buffer
+    bufferGlyph = BufferGlyph(glyphStartGPU, glyphCount)
+    # CRITICAL FIX: Julia bufferGlyphs length before push is the correct 0-based index for shader
+    # When we push this glyph, it will be at index length(bufferGlyphs), which is 0-based for WGSL
+    bufferIdx = length(bufferGlyphs)  # This gives 0-based index: 0, 1, 2, 3...
     push!(bufferGlyphs, bufferGlyph)
+
+    # DEBUG: Basic validation without verbose output
+    # if charCode in ['H', 'e', 'l']
+    #     println("DEBUG: Glyph '$charCode': bufferIdx=$bufferIdx, start=$glyphStart, count=$glyphCount")
+    # end
 
     glyph = Glyph(
         UInt32(glyphIdx),
-        Int32(bufferIdx),  # Now correctly 0-based for shader
+        Int32(bufferIdx),  # Now correctly 0-based for shader (0, 1, 2, 3...)
         Int32(glyphCount),
         Int32(glyph.metrics.width),
         Int32(glyph.metrics.height),
