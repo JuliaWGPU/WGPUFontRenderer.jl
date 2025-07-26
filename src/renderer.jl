@@ -227,8 +227,8 @@ function generateVertexData(renderer::FontRenderer, text::String)
     
     # Use screen coordinates with proper scaling
     # Font has units per em (stored in fontEmSize), so we need to scale appropriately
-    # Much smaller scale for readable text size
-    scale = 0.01f0  # Further reduced scale for fitting text within the window
+    # This scale must match the coordinate space calculation in the shader
+    scale = 0.01f0  # 1 font unit = 0.01 screen pixels → 1 screen pixel = 100 font units
     
     # Define text block bounds for word wrap
     textBlockLeft = 10.0f0

@@ -58,443 +58,12 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 end
 
 function getFragmentShader()::String
-    # Use simple test shader to isolate artifacts
-    return getReferenceFragmentShader()
-    
-    # Previous attempts that had line artifacts:
-    # return getNoSuperSamplingShader()         # Still had lines  
-    # return getReferenceFragmentShader()       # EXACT reference - had lines
-    # return getStableCoverageShader()          # Had glitches
-    # return getFineTunedCoordinateFixShader()  # Had glitches  
-    # return getCoordinateScalingFixShader()    # Caused letter cutoff
+    return getFixedFragmentShader()
 end
 
-# Simple test shader that shows solid colors per character
-function getSimpleTestShader()::String
-    return """
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
 
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    // Different colors for different characters based on bufferIndex
-    let colorIndex = input.bufferIndex % 6;
-    
-    if (colorIndex == 0) {
-        return vec4<f32>(1.0, 0.0, 0.0, 1.0);  // Red
-    } else if (colorIndex == 1) {
-        return vec4<f32>(0.0, 1.0, 0.0, 1.0);  // Green
-    } else if (colorIndex == 2) {
-        return vec4<f32>(0.0, 0.0, 1.0, 1.0);  // Blue
-    } else if (colorIndex == 3) {
-        return vec4<f32>(1.0, 1.0, 0.0, 1.0);  // Yellow
-    } else if (colorIndex == 4) {
-        return vec4<f32>(1.0, 0.0, 1.0, 1.0);  // Magenta
-    } else {
-        return vec4<f32>(0.0, 1.0, 1.0, 1.0);  // Cyan
-    }
-}
-"""
-end
 
-# Simple debug shader that shows solid colors per character
-function getDebugFragmentShader()::String
-    return """
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
 
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    // Simple visualization of UV coordinates
-    // Since the debug files show UVs are set to 0.0-1.0 normalized values,
-    // we can directly use them as colors
-    
-    // Red = U coordinate, Green = V coordinate, Blue = 0.5 for visibility
-    return vec4<f32>(input.uv.x, input.uv.y, 0.5, 1.0);
-}
-"""
-end
-
-# Simplified complex shader for debugging coverage calculations
-function getSimpleComplexShader()::String
-    return """
-// Simplified fragment shader for debugging coverage calculation
-// Based on the reference gpu-font-rendering implementation
-
-struct Glyph {
-    start: u32,
-    count: u32,
-}
-
-struct Curve {
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>,
-}
-
-struct FontUniforms {
-    color: vec4<f32>,
-    projection: mat4x4<f32>,
-    antiAliasingWindowSize: f32,
-    enableSuperSamplingAntiAliasing: u32,
-    padding: vec2<u32>,
-}
-
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
-
-@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
-@group(0) @binding(1) var<storage, read> curves: array<Curve>;
-@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
-
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-
-    var alpha = 0.0;
-    
-    // Use a fixed large value for better visibility during testing
-    let inverseDiameter = 100.0;
-    
-    let glyph = glyphs[input.bufferIndex];
-    
-    // Simplified coverage calculation - just count intersections
-    for (var i = 0u; i < glyph.count; i += 1u) {
-        let curveIndex = glyph.start + i;
-        if (curveIndex >= arrayLength(&curves)) {
-            break;
-        }
-
-        let curve = curves[curveIndex];
-        
-        // Transform curve control points by subtracting sample position
-        let p0 = curve.p0 - input.uv;
-        let p1 = curve.p1 - input.uv;
-        let p2 = curve.p2 - input.uv;
-        
-        // Simple coverage test - if any curve crosses the horizontal ray
-        if ((p0.y <= 0.0 && p2.y > 0.0) || (p0.y > 0.0 && p2.y <= 0.0)) {
-            alpha += 0.1; // Add small contribution per crossing
-        }
-    }
-    
-    alpha = clamp(alpha, 0.0, 1.0);
-    return vec4<f32>(uniforms.color.rgb, uniforms.color.a * alpha);
-}
-"""
-end
-
-# Debug coverage shader to analyze winding number issues
-function getDebugCoverageShader()::String
-    return """
-// Improved fragment shader for font rendering with better numerical stability
-// Based on the reference gpu-font-rendering implementation
-
-struct Glyph {
-    start: u32,
-    count: u32,
-}
-
-struct Curve {
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>,
-}
-
-struct FontUniforms {
-    color: vec4<f32>,
-    projection: mat4x4<f32>,
-    antiAliasingWindowSize: f32,
-    enableSuperSamplingAntiAliasing: u32,
-    padding: vec2<u32>,
-}
-
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
-
-@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
-@group(0) @binding(1) var<storage, read> curves: array<Curve>;
-@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
-
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    var alpha = 0.0;
-    
-    // Use a simple fixed anti-aliasing value to isolate horizontal line issues
-    // This eliminates potential derivative calculation problems
-    let inverseDiameter = 1.0 / uniforms.antiAliasingWindowSize;
-    
-    let glyph = glyphs[input.bufferIndex];
-    
-    for (var i = 0u; i < glyph.count; i += 1u) {
-        let curveIndex = glyph.start + i;
-        if (curveIndex >= arrayLength(&curves)) {
-            break;
-        }
-        
-        let curve = curves[curveIndex];
-        
-        // Transform curve control points by subtracting sample position
-        let p0 = curve.p0 - input.uv;
-        let p1 = curve.p1 - input.uv;
-        let p2 = curve.p2 - input.uv;
-        
-        // Calculate coverage for this curve
-        alpha += computeCoverage(inverseDiameter, p0, p1, p2);
-        
-        // Apply super-sampling anti-aliasing if enabled
-        if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-            // Rotate points 90 degrees for second sample
-            let rp0 = vec2<f32>(p0.y, -p0.x);
-            let rp1 = vec2<f32>(p1.y, -p1.x);
-            let rp2 = vec2<f32>(p2.y, -p2.x);
-            
-            alpha += computeCoverage(inverseDiameter, rp0, rp1, rp2);
-        }
-    }
-    
-    // Average the samples if super-sampling is enabled
-    if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-        alpha *= 0.5;
-    }
-    
-    // Clamp final alpha to valid range
-    alpha = clamp(alpha, 0.0, 1.0);
-    
-    // Return final color with proper alpha blending
-    return vec4<f32>(uniforms.color.rgb, uniforms.color.a * alpha);
-}
-
-fn computeCoverage(
-    inverseDiameter: f32,
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>
-) -> f32 {
-    // Early exit if curve is entirely above or below the ray
-    if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0.0; }
-    if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0.0; }
-    
-    // Quadratic Bezier curve coefficients
-    // Note: Simplified from abc formula by extracting a factor of (-2) from b
-    let a = p0 - 2.0 * p1 + p2;
-    let b = p0 - p1;
-    let c = p0;
-    
-    var t0: f32 = -1.0;
-    var t1: f32 = -1.0;
-    
-    if (abs(a.y) >= 1e-5) {
-        // Quadratic segment - solve using quadratic formula
-        let radicand = b.y * b.y - a.y * c.y;
-        if (radicand > 0.0) {  // Changed from >= to > to avoid numerical issues
-            let s = sqrt(radicand);
-            t0 = (b.y - s) / a.y;
-            t1 = (b.y + s) / a.y;
-        }
-    } else {
-        // Linear segment - avoid division by zero
-        // Handle the case where a.y is near zero more carefully
-        if (abs(p0.y - p2.y) > 1e-10) {
-            let t = p0.y / (p0.y - p2.y);
-            if (p0.y < p2.y) {
-                t0 = -1.0;
-                t1 = t;
-            } else {
-                t0 = t;
-                t1 = -1.0;
-            }
-        }
-    }
-    
-    var alpha = 0.0;
-    
-    // Process first root (exit point)
-    if (t0 >= 0.0 && t0 < 1.0) {  // Changed <= to < to match reference
-        let x = (a.x * t0 - 2.0 * b.x) * t0 + c.x;
-        alpha += clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-    }
-    
-    // Process second root (entry point)
-    if (t1 >= 0.0 && t1 < 1.0) {  // Changed <= to < to match reference
-        let x = (a.x * t1 - 2.0 * b.x) * t1 + c.x;
-        alpha -= clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-    }
-    
-    return alpha;  // Don't clamp here, let the caller handle final clamping
-}
-"""
-end
-
-# Stable coverage shader with improved numerical precision
-function getStableCoverageShader()::String
-    return """
-// Stable fragment shader for font rendering with reduced artifacts
-// Based on the reference gpu-font-rendering implementation
-
-struct Glyph {
-    start: u32,
-    count: u32,
-}
-
-struct Curve {
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>,
-}
-
-struct FontUniforms {
-    color: vec4<f32>,
-    projection: mat4x4<f32>,
-    antiAliasingWindowSize: f32,
-    enableSuperSamplingAntiAliasing: u32,
-    padding: vec2<u32>,
-}
-
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
-
-@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
-@group(0) @binding(1) var<storage, read> curves: array<Curve>;
-@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
-
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    var alpha = 0.0;
-    
-    // Use a conservative anti-aliasing window size
-    let inverseDiameter = 1.0 / max(uniforms.antiAliasingWindowSize, 1.0);
-    
-    let glyph = glyphs[input.bufferIndex];
-    
-    // Only process curves that could potentially contribute
-    for (var i = 0u; i < glyph.count; i += 1u) {
-        let curveIndex = glyph.start + i;
-        if (curveIndex >= arrayLength(&curves)) {
-            break;
-        }
-        
-        let curve = curves[curveIndex];
-        
-        // Transform curve control points by subtracting sample position
-        let p0 = curve.p0 - input.uv;
-        let p1 = curve.p1 - input.uv;
-        let p2 = curve.p2 - input.uv;
-        
-        // Calculate coverage for this curve with improved stability
-        alpha += computeStableCoverage(inverseDiameter, p0, p1, p2);
-    }
-    
-    // Clamp final alpha to valid range
-    alpha = clamp(alpha, 0.0, 1.0);
-    
-    // Return final color with proper alpha blending
-    return vec4<f32>(uniforms.color.rgb, uniforms.color.a * alpha);
-}
-
-fn computeStableCoverage(
-    inverseDiameter: f32,
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>
-) -> f32 {
-    // More aggressive early exit if curve is entirely above or below the ray
-    if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0.0; }
-    if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0.0; }
-    
-    // Quadratic Bezier curve coefficients
-    let a = p0 - 2.0 * p1 + p2;
-    let b = p0 - p1;
-    let c = p0;
-    
-    var t0 = -1.0;
-    var t1 = -1.0;
-    
-    // More robust numerical handling with better epsilon values
-    let eps = 1e-8;  // Tighter epsilon for better precision
-    
-    if (abs(a.y) > eps) {
-        // Quadratic case - use numerically stable quadratic formula
-        let discriminant = b.y * b.y - a.y * c.y;
-        if (discriminant > eps) {  // Avoid near-zero discriminants
-            let sqrtDisc = sqrt(discriminant);
-            // Use the numerically stable version of quadratic formula
-            if (b.y >= 0.0) {
-                let q = -(b.y + sqrtDisc);
-                t0 = q / a.y;
-                t1 = c.y / q;
-            } else {
-                let q = -(b.y - sqrtDisc);
-                t0 = c.y / q;
-                t1 = q / a.y;
-            }
-            
-            // Ensure proper ordering
-            if (t0 > t1) {
-                let temp = t0;
-                t0 = t1;
-                t1 = temp;
-            }
-        }
-    } else {
-        // Linear case - more robust handling
-        let denomY = p0.y - p2.y;
-        if (abs(denomY) > eps) {
-            let t = p0.y / denomY;
-            if (t >= 0.0 && t <= 1.0) {
-                if (p0.y < p2.y) {
-                    t1 = t;
-                } else {
-                    t0 = t;
-                }
-            }
-        }
-    }
-    
-    var alpha = 0.0;
-    
-    // Process intersections with more stable evaluation and bounds checking
-    if (t0 >= -1e-6 && t0 <= 1.0 + 1e-6) {  // Slightly relaxed bounds to avoid edge artifacts
-        let x = evaluateQuadraticX(a.x, b.x, c.x, clamp(t0, 0.0, 1.0));
-        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-        alpha += contribution;
-    }
-    
-    if (t1 >= -1e-6 && t1 <= 1.0 + 1e-6) {  // Slightly relaxed bounds to avoid edge artifacts
-        let x = evaluateQuadraticX(a.x, b.x, c.x, clamp(t1, 0.0, 1.0));
-        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-        alpha -= contribution;
-    }
-    
-    return alpha;
-}
-
-fn evaluateQuadraticX(a: f32, b: f32, c: f32, t: f32) -> f32 {
-    // Use Horner's method for better numerical stability
-    return (a * t - 2.0 * b) * t + c;
-}
-"""
-end
 
 # Keep the original complex fragment shader for later use
 function getComplexFragmentShader()::String
@@ -641,12 +210,12 @@ fn rotate(v: vec2<f32>) -> vec2<f32> {
 """
 end
 
-# EXACT reference implementation from gpu-font-rendering
-# Translated directly from the OpenGL fragment shader
-function getNoSuperSamplingShader()::String
+
+# Fixed fragment shader that resolves the horizontal/vertical line artifacts
+function getFixedFragmentShader()::String
     return """
-// Debug shader with super-sampling DISABLED to isolate horizontal line artifacts
-// This removes the potential source of instability from the rotated ray sampling
+// Fixed fragment shader for font rendering - eliminates horizontal/vertical line artifacts
+// Based on gpu-font-rendering with proper coordinate space handling
 
 struct Glyph {
     start: u32,
@@ -678,19 +247,36 @@ struct FragmentInput {
 
 @fragment
 fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    // Handle special visualization cases
+    if (input.bufferIndex == -1) {
+        return vec4<f32>(1.0, 0.0, 0.0, 0.1); // Red text quad bounding box
+    }
+    if (input.bufferIndex == -2) {
+        return vec4<f32>(0.0, 0.0, 1.0, 0.05); // Blue text block bounding box
+    }
+    
+    // Bounds check for glyph index
     if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
     var alpha = 0.0;
     
-    // Use a MUCH simpler inverse diameter calculation
-    // This completely avoids fwidth approximation issues
-    let inverseDiameter = 1.0 / uniforms.antiAliasingWindowSize;
+    // COORDINATE SPACE FIX:
+    // The issue was incorrect scaling between font units and screen pixels
+    // Font scale used in vertex generation: 0.01 (1 font unit = 0.01 screen pixels)
+    // So 1 screen pixel = 100 font units
+    
+    let fontUnitsPerScreenPixel = 100.0; // 1/0.01
+    
+    // Scale the anti-aliasing window to font units
+    // This ensures proper coverage calculation without artifacts
+    let scaledWindowSize = uniforms.antiAliasingWindowSize * fontUnitsPerScreenPixel;
+    let inverseDiameter = 1.0 / max(scaledWindowSize, 1.0);
     
     let glyph = glyphs[input.bufferIndex];
     
-    // Only use the main ray - NO super-sampling at all
+    // Process each curve with fixed coordinate handling
     for (var i = 0u; i < glyph.count; i += 1u) {
         let curveIndex = glyph.start + i;
         if (curveIndex >= arrayLength(&curves)) {
@@ -698,364 +284,83 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
         }
         
         let curve = curves[curveIndex];
+        
+        // Transform curve points to sample space
         let p0 = curve.p0 - input.uv;
         let p1 = curve.p1 - input.uv;
         let p2 = curve.p2 - input.uv;
         
-        // Use the exact same coverage calculation as reference but NO rotation
-        alpha += computeCoverage(inverseDiameter, p0, p1, p2);
+        // Calculate coverage with improved numerical stability
+        alpha += computeFixedCoverage(inverseDiameter, p0, p1, p2);
     }
     
-    // NO averaging since we only have one sample
-    
+    // Clamp and return result
     alpha = clamp(alpha, 0.0, 1.0);
-    return uniforms.color * alpha;
+    return vec4<f32>(uniforms.color.rgb, uniforms.color.a * alpha);
 }
 
-fn computeCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
+// Fixed coverage calculation with improved numerical stability
+fn computeFixedCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
+    // Early exit if curve is entirely above or below the horizontal ray
     if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0.0; }
     if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0.0; }
     
+    // Quadratic Bezier coefficients: B(t) = (1-t)²p0 + 2t(1-t)p1 + t²p2
+    // Rearranged as: B(t) = at² + bt + c where:
     let a = p0 - 2.0 * p1 + p2;
-    let b = p0 - p1;
+    let b = 2.0 * (p1 - p0);
     let c = p0;
     
-    var t0: f32;
-    var t1: f32;
-    if (abs(a.y) >= 1e-5) {
-        let radicand = b.y * b.y - a.y * c.y;
-        if (radicand <= 0.0) { return 0.0; }
-        
-        let s = sqrt(radicand);
-        t0 = (b.y - s) / a.y;
-        t1 = (b.y + s) / a.y;
-    } else {
-        let t = p0.y / (p0.y - p2.y);
-        if (p0.y < p2.y) {
-            t0 = -1.0;
-            t1 = t;
-        } else {
-            t0 = t;
-            t1 = -1.0;
+    var t0 = -1.0;
+    var t1 = -1.0;
+    
+    let eps = 1e-6;
+    
+    if (abs(a.y) > eps) {
+        // Quadratic case - find where curve crosses y=0
+        let discriminant = b.y * b.y - 4.0 * a.y * c.y;
+        if (discriminant > 0.0) {
+            let sqrtDisc = sqrt(discriminant);
+            let invTwoA = 1.0 / (2.0 * a.y);
+            t0 = (-b.y - sqrtDisc) * invTwoA;
+            t1 = (-b.y + sqrtDisc) * invTwoA;
+            
+            // Ensure t0 <= t1
+            if (t0 > t1) {
+                let temp = t0;
+                t0 = t1;
+                t1 = temp;
+            }
+        }
+    } else if (abs(b.y) > eps) {
+        // Linear case - line crosses y=0 at t = -c.y/b.y
+        let t = -c.y / b.y;
+        if (t >= 0.0 && t <= 1.0) {
+            // Determine which is entry vs exit based on direction
+            if (b.y > 0.0) {
+                t0 = -1.0; // No exit before this point
+                t1 = t;    // Entry point
+            } else {
+                t0 = t;    // Exit point
+                t1 = -1.0; // No entry after this point
+            }
         }
     }
     
     var alpha = 0.0;
     
-    if (t0 >= 0.0 && t0 < 1.0) {
-        let x = (a.x * t0 - 2.0 * b.x) * t0 + c.x;
-        alpha += clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+    // Process exit point (where ray exits the shape)
+    if (t0 >= 0.0 && t0 <= 1.0) {
+        let x = a.x * t0 * t0 + b.x * t0 + c.x;
+        let coverage = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha += coverage;
     }
     
-    if (t1 >= 0.0 && t1 < 1.0) {
-        let x = (a.x * t1 - 2.0 * b.x) * t1 + c.x;
-        alpha -= clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-    }
-    
-    return alpha;
-}
-"""
-end
-
-# Coordinate scaling fix shader to eliminate horizontal line artifacts
-function getCoordinateScalingFixShader()::String
-    return """
-// Coordinate scaling fix shader to eliminate horizontal line artifacts
-// Based on diagnostic results: horizontal lines persist even without super-sampling,
-// indicating the issue is in coordinate space scaling rather than rotated ray calculations
-
-struct Glyph {
-    start: u32,
-    count: u32,
-}
-
-struct Curve {
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>,
-}
-
-struct FontUniforms {
-    color: vec4<f32>,
-    projection: mat4x4<f32>,
-    antiAliasingWindowSize: f32,
-    enableSuperSamplingAntiAliasing: u32,
-    padding: vec2<u32>,
-}
-
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
-
-@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
-@group(0) @binding(1) var<storage, read> curves: array<Curve>;
-@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
-
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    var alpha = 0.0;
-    
-    // COORDINATE SCALING FIX:
-    // The horizontal lines are caused by incorrect scaling between font units and pixels
-    // Font units: ~2000, Screen scale: 0.05 → 1 font unit = 0.05 screen pixels
-    // This means 1 screen pixel = 20 font units
-    
-    // Instead of using a direct inverseDiameter calculation, we need to account
-    // for the fact that our UVs are in font units but our anti-aliasing window
-    // should be in screen/pixel coordinates
-    
-    // Calculate proper scaling factor
-    let fontToScreenScale = 0.05;  // This matches the scale used in vertex generation
-    let screenToFontScale = 1.0 / fontToScreenScale;  // 20.0
-    
-    // The anti-aliasing window size should be scaled to font units
-    // A smaller value here = more anti-aliasing, larger = sharper edges
-    let scaledAntiAliasingWindow = uniforms.antiAliasingWindowSize * screenToFontScale;
-    
-    // Use a more conservative scaling to reduce numerical precision issues
-    let inverseDiameter = 1.0 / max(scaledAntiAliasingWindow, 10.0);
-    
-    let glyph = glyphs[input.bufferIndex];
-    
-    // Process each curve with improved coordinate handling
-    for (var i = 0u; i < glyph.count; i += 1u) {
-        let curveIndex = glyph.start + i;
-        if (curveIndex >= arrayLength(&curves)) {
-            break;
-        }
-        
-        let curve = curves[curveIndex];
-        let p0 = curve.p0 - input.uv;
-        let p1 = curve.p1 - input.uv;
-        let p2 = curve.p2 - input.uv;
-        
-        // Use improved coverage calculation with better numerical stability
-        alpha += computeScaledCoverage(inverseDiameter, p0, p1, p2);
-    }
-    
-    // Clamp to valid range
-    alpha = clamp(alpha, 0.0, 1.0);
-    return uniforms.color * alpha;
-}
-
-// Improved coverage calculation with better handling of coordinate scaling
-fn computeScaledCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
-    // More robust early exit conditions
-    let epsilon = 0.001;  // Slightly larger epsilon to handle font unit precision
-    if (p0.y > epsilon && p1.y > epsilon && p2.y > epsilon) { return 0.0; }
-    if (p0.y < -epsilon && p1.y < -epsilon && p2.y < -epsilon) { return 0.0; }
-    
-    let a = p0 - 2.0 * p1 + p2;
-    let b = p0 - p1;
-    let c = p0;
-    
-    var t0: f32;
-    var t1: f32;
-    
-    // Use a more conservative epsilon for numerical stability in font units
-    let numerical_epsilon = 1e-3;  // Larger epsilon for font unit calculations
-    
-    if (abs(a.y) >= numerical_epsilon) {
-        let discriminant = b.y * b.y - a.y * c.y;
-        if (discriminant <= 0.0) { return 0.0; }
-        
-        let s = sqrt(discriminant);
-        t0 = (b.y - s) / a.y;
-        t1 = (b.y + s) / a.y;
-        
-        // Ensure proper ordering
-        if (t0 > t1) {
-            let temp = t0;
-            t0 = t1;
-            t1 = temp;
-        }
-    } else {
-        // Linear case - handle with better numerical stability
-        let denom = p0.y - p2.y;
-        if (abs(denom) < numerical_epsilon) { return 0.0; }
-        
-        let t = p0.y / denom;
-        if (p0.y < p2.y) {
-            t0 = -1.0;
-            t1 = t;
-        } else {
-            t0 = t;
-            t1 = -1.0;
-        }
-    }
-    
-    var alpha = 0.0;
-    
-    // Process intersections with tighter bounds checking
-    let bounds_epsilon = 1e-6;
-    
-    if (t0 >= -bounds_epsilon && t0 < 1.0 + bounds_epsilon) {
-        let clamped_t0 = clamp(t0, 0.0, 1.0);
-        let x = (a.x * clamped_t0 - 2.0 * b.x) * clamped_t0 + c.x;
-        
-        // Apply anti-aliasing with improved scaling
-        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-        alpha += contribution;
-    }
-    
-    if (t1 >= -bounds_epsilon && t1 < 1.0 + bounds_epsilon) {
-        let clamped_t1 = clamp(t1, 0.0, 1.0);
-        let x = (a.x * clamped_t1 - 2.0 * b.x) * clamped_t1 + c.x;
-        
-        // Apply anti-aliasing with improved scaling
-        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-        alpha -= contribution;
-    }
-    
-    return alpha;
-}
-"""
-end
-
-# Fine-tuned coordinate scaling fix to prevent letter cutoff while maintaining horizontal line fix
-function getFineTunedCoordinateFixShader()::String
-    return """
-// Fine-tuned coordinate scaling fix shader
-// Fixes horizontal line artifacts while preventing letter cutoff
-// Based on analysis: horizontal lines fixed but conservative min anti-aliasing caused letter cutoff
-
-struct Glyph {
-    start: u32,
-    count: u32,
-}
-
-struct Curve {
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>,
-}
-
-struct FontUniforms {
-    color: vec4<f32>,
-    projection: mat4x4<f32>,
-    antiAliasingWindowSize: f32,
-    enableSuperSamplingAntiAliasing: u32,
-    padding: vec2<u32>,
-}
-
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
-
-@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
-@group(0) @binding(1) var<storage, read> curves: array<Curve>;
-@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
-
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    var alpha = 0.0;
-    
-    // FINE-TUNED COORDINATE SCALING:
-    // Keep the coordinate space fix but reduce the conservative minimum
-    // to prevent letter cutoff while maintaining horizontal line fix
-    
-    let fontToScreenScale = 0.05;
-    let screenToFontScale = 20.0;  // 1.0 / 0.05
-    
-    // Scale anti-aliasing window to font units
-    let scaledAntiAliasingWindow = uniforms.antiAliasingWindowSize * screenToFontScale;
-    
-    // REDUCED minimum from 10.0 to 2.0 to prevent letter cutoff
-    // This should still prevent horizontal lines but allow more letter detail
-    let inverseDiameter = 1.0 / max(scaledAntiAliasingWindow, 2.0);
-    
-    let glyph = glyphs[input.bufferIndex];
-    
-    for (var i = 0u; i < glyph.count; i += 1u) {
-        let curveIndex = glyph.start + i;
-        if (curveIndex >= arrayLength(&curves)) {
-            break;
-        }
-        
-        let curve = curves[curveIndex];
-        let p0 = curve.p0 - input.uv;
-        let p1 = curve.p1 - input.uv;
-        let p2 = curve.p2 - input.uv;
-        
-        // Use balanced coverage calculation
-        alpha += computeBalancedCoverage(inverseDiameter, p0, p1, p2);
-    }
-    
-    alpha = clamp(alpha, 0.0, 1.0);
-    return uniforms.color * alpha;
-}
-
-// Balanced coverage calculation that prevents both horizontal lines and letter cutoff
-fn computeBalancedCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
-    // Use smaller epsilon values to preserve letter detail
-    let epsilon = 0.0001;  // Reduced from 0.001 to preserve fine details
-    if (p0.y > epsilon && p1.y > epsilon && p2.y > epsilon) { return 0.0; }
-    if (p0.y < -epsilon && p1.y < -epsilon && p2.y < -epsilon) { return 0.0; }
-    
-    let a = p0 - 2.0 * p1 + p2;
-    let b = p0 - p1;
-    let c = p0;
-    
-    var t0: f32;
-    var t1: f32;
-    
-    // Use more precise epsilon for better letter detail
-    let numerical_epsilon = 1e-6;  // Reduced from 1e-3 for better precision
-    
-    if (abs(a.y) >= numerical_epsilon) {
-        let discriminant = b.y * b.y - a.y * c.y;
-        if (discriminant <= 0.0) { return 0.0; }
-        
-        let s = sqrt(discriminant);
-        t0 = (b.y - s) / a.y;
-        t1 = (b.y + s) / a.y;
-        
-        if (t0 > t1) {
-            let temp = t0;
-            t0 = t1;
-            t1 = temp;
-        }
-    } else {
-        let denom = p0.y - p2.y;
-        if (abs(denom) < numerical_epsilon) { return 0.0; }
-        
-        let t = p0.y / denom;
-        if (p0.y < p2.y) {
-            t0 = -1.0;
-            t1 = t;
-        } else {
-            t0 = t;
-            t1 = -1.0;
-        }
-    }
-    
-    var alpha = 0.0;
-    
-    // Use tighter bounds for better precision
-    let bounds_epsilon = 1e-8;  // Tighter bounds for better letter detail
-    
-    if (t0 >= -bounds_epsilon && t0 < 1.0 + bounds_epsilon) {
-        let clamped_t0 = clamp(t0, 0.0, 1.0);
-        let x = (a.x * clamped_t0 - 2.0 * b.x) * clamped_t0 + c.x;
-        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-        alpha += contribution;
-    }
-    
-    if (t1 >= -bounds_epsilon && t1 < 1.0 + bounds_epsilon) {
-        let clamped_t1 = clamp(t1, 0.0, 1.0);
-        let x = (a.x * clamped_t1 - 2.0 * b.x) * clamped_t1 + c.x;
-        let contribution = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-        alpha -= contribution;
+    // Process entry point (where ray enters the shape)
+    if (t1 >= 0.0 && t1 <= 1.0) {
+        let x = a.x * t1 * t1 + b.x * t1 + c.x;
+        let coverage = clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
+        alpha -= coverage;
     }
     
     return alpha;
