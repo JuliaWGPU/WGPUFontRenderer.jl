@@ -277,7 +277,7 @@ function prepareGlyphsForText(str::String)
         return face[]
     end
 
-    face = loadFace(joinpath(pkgdir(WGPUFontRenderer), "assets", "JuliaMono-Light.ttf"))
+    face = loadFace(joinpath(pkgdir(WGPUFontRenderer), "assets", "JuliaMono-Regular.ttf"))
 
     # Store the font's emSize globally
     global fontEmSize = face.units_per_EM

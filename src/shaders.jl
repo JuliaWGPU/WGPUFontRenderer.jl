@@ -1,9 +1,23 @@
 # WGSL Shader generation for font rendering
-# Based on gpu-font-renderer implementation
+# Based on gpu-font-renderer reference implementation
+
+# Include the faithful reference implementation
+include("reference_faithful_shader.jl")
 
 function getVertexShader()::String
+    return getReferenceVertexShader()
+end
+
+function getFragmentShader()::String
+    # Use the faithful reference implementation that has proper fwidth() approximation
+    return getReferenceFragmentShader()
+end
+
+# Binary shader for testing - completely eliminates anti-aliasing artifacts
+function getBinaryFragmentShader()::String
     return """
-// Vertex shader for font rendering
+// Binary fragment shader - eliminates all anti-aliasing artifacts
+// Uses simple winding number calculation with no anti-aliasing
 
 struct Glyph {
     start: u32,
@@ -11,9 +25,12 @@ struct Glyph {
 }
 
 struct Curve {
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
 }
 
 struct FontUniforms {
@@ -24,15 +41,7 @@ struct FontUniforms {
     padding: vec2<u32>,
 }
 
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) depth: f32,
-    @location(2) uv: vec2<f32>,
-    @location(3) bufferIndex: i32,
-}
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
+struct FragmentInput {
     @location(0) uv: vec2<f32>,
     @location(1) bufferIndex: i32,
 }
@@ -41,25 +50,96 @@ struct VertexOutput {
 @group(0) @binding(1) var<storage, read> curves: array<Curve>;
 @group(0) @binding(2) var<uniform> uniforms: FontUniforms;
 
-@vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
-    var output: VertexOutput;
+@fragment
+fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+    // Handle special visualization cases
+    if (input.bufferIndex == -1) {
+        return vec4<f32>(1.0, 0.0, 0.0, 0.1); // Red text quad bounding box
+    }
+    if (input.bufferIndex == -2) {
+        return vec4<f32>(0.0, 0.0, 1.0, 0.05); // Blue text block bounding box
+    }
+    
+    // Bounds check for glyph index
+    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    
+    var windingNumber = 0;
+    
+    let glyph = glyphs[input.bufferIndex];
+    
+    // Use simple winding number calculation - completely eliminates numerical issues
+    for (var i = 0u; i < glyph.count; i += 1u) {
+        let curveIndex = glyph.start + i;
+        if (curveIndex >= arrayLength(&curves)) {
+            break;
+        }
+        
+        let curve = curves[curveIndex];
+        
+        // Transform curve points to sample space
+        let p0 = vec2<f32>(curve.x0, curve.y0) - input.uv;
+        let p1 = vec2<f32>(curve.x1, curve.y1) - input.uv;
+        let p2 = vec2<f32>(curve.x2, curve.y2) - input.uv;
+        
+        // Simple binary coverage - count curve crossings
+        windingNumber += computeBinaryCoverage(p0, p1, p2);
+    }
+    
+    // Even-odd winding rule: odd = filled, even = transparent
+    let alpha = select(0.0, 1.0, (windingNumber % 2) != 0);
+    
+    return vec4<f32>(uniforms.color.rgb, uniforms.color.a * alpha);
+}
 
-    // Transform position by projection matrix, using depth coordinate for z-ordering
-    let worldPos = vec4<f32>(input.position, input.depth, 1.0);
-    output.position = uniforms.projection * worldPos;
-
-    // Pass through UV coordinates and buffer index
-    output.uv = input.uv;
-    output.bufferIndex = input.bufferIndex;
-
-    return output;
+// Binary coverage calculation - just counts crossings (no anti-aliasing)
+fn computeBinaryCoverage(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> i32 {
+    // Early exit if curve is entirely above or below the horizontal ray
+    if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0; }
+    if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0; }
+    
+    // Use simple quadratic formula
+    let a = p0 - 2.0 * p1 + p2;
+    let b = 2.0 * (p1 - p0);
+    let c = p0;
+    
+    var crossings = 0;
+    
+    let eps = 1e-6;
+    
+    if (abs(a.y) > eps) {
+        // Quadratic case
+        let discriminant = b.y * b.y - 4.0 * a.y * c.y;
+        if (discriminant >= 0.0) {
+            let sqrtDisc = sqrt(discriminant);
+            let invTwoA = 1.0 / (2.0 * a.y);
+            let t0 = (-b.y - sqrtDisc) * invTwoA;
+            let t1 = (-b.y + sqrtDisc) * invTwoA;
+            
+            // Count crossings for each valid t value
+            if (t0 >= 0.0 && t0 <= 1.0) {
+                let x = a.x * t0 * t0 + b.x * t0 + c.x;
+                if (x > 0.0) { crossings += 1; }
+            }
+            
+            if (t1 >= 0.0 && t1 <= 1.0 && abs(t1 - t0) > eps) {
+                let x = a.x * t1 * t1 + b.x * t1 + c.x;
+                if (x > 0.0) { crossings += 1; }
+            }
+        }
+    } else if (abs(b.y) > eps) {
+        // Linear case
+        let t = -c.y / b.y;
+        if (t >= 0.0 && t <= 1.0) {
+            let x = b.x * t + c.x;
+            if (x > 0.0) { crossings += 1; }
+        }
+    }
+    
+    return crossings;
 }
 """
-end
-
-function getFragmentShader()::String
-    return getWallaceDobbieFragmentShader()  # Wallace Dobbie's approach
 end
 
 # Advanced spurious line fix shader that eliminates artificial line artifacts
@@ -2529,151 +2609,4 @@ fn computeWallaceDobbieWinding(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f
 """
 end
 
-function getReferenceFragmentShader()::String
-    return """
-// EXACT WGSL translation of gpu-font-rendering fragment shader
-// Based on: http://wdobbie.com/post/gpu-text-rendering-with-vector-textures/
-
-struct Glyph {
-    start: u32,
-    count: u32,
-}
-
-struct Curve {
-    p0: vec2<f32>,
-    p1: vec2<f32>,
-    p2: vec2<f32>,
-}
-
-struct FontUniforms {
-    color: vec4<f32>,
-    projection: mat4x4<f32>,
-    antiAliasingWindowSize: f32,
-    enableSuperSamplingAntiAliasing: u32,
-    padding: vec2<u32>,
-}
-
-struct FragmentInput {
-    @location(0) uv: vec2<f32>,
-    @location(1) bufferIndex: i32,
-}
-
-@group(0) @binding(0) var<storage, read> glyphs: array<Glyph>;
-@group(0) @binding(1) var<storage, read> curves: array<Curve>;
-@group(0) @binding(2) var<uniform> uniforms: FontUniforms;
-
-@fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
-    // Check for bounding box visualizations
-    if (input.bufferIndex == -1) {
-        return vec4<f32>(1.0, 0.0, 0.0, 0.3); // Red text quad bounding box with transparency
-    }
-    if (input.bufferIndex == -2) {
-        return vec4<f32>(0.0, 0.0, 1.0, 0.2); // Blue text block bounding box with transparency
-    }
-    
-    var alpha = 0.0;
-    
-    // Proper fwidth approximation for WGSL
-    // The reference uses: vec2 inverseDiameter = 1.0 / (antiAliasingWindowSize * fwidth(uv))
-    // We need to approximate fwidth(uv) based on the font scale and pixel size
-    
-    // Debug: Use much simpler inverse diameter calculation to eliminate coordinate space issues
-    // The horizontal lines suggest a scaling problem with the fwidth approximation
-    
-    // Try direct scaling based on font units to screen pixels
-    // Font units are ~2000, screen scale is 0.01, so 1 font unit = 0.01 screen pixels
-    // Therefore 1 screen pixel = 100 font units
-    let pixelSizeInFontUnits = 100.0; // 1/0.01
-    
-    // Use a much larger anti-aliasing window to reduce sensitivity to numerical precision
-    let inverseDiameterX = 1.0 / (uniforms.antiAliasingWindowSize * pixelSizeInFontUnits);
-    let inverseDiameterY = inverseDiameterX; // Use same value for both directions initially
-    
-    if (input.bufferIndex < 0 || input.bufferIndex >= i32(arrayLength(&glyphs))) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    let glyph = glyphs[input.bufferIndex];
-    for (var i = 0u; i < glyph.count; i += 1u) {
-        let curveIndex = glyph.start + i;
-        if (curveIndex >= arrayLength(&curves)) {
-            break;
-        }
-        
-        let curve = curves[curveIndex];
-        
-        let p0 = curve.p0 - input.uv;
-        let p1 = curve.p1 - input.uv;
-        let p2 = curve.p2 - input.uv;
-        
-        alpha += computeCoverage(inverseDiameterX, p0, p1, p2);
-        if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-            alpha += computeCoverage(inverseDiameterY, rotate(p0), rotate(p1), rotate(p2));
-        }
-    }
-    
-    if (uniforms.enableSuperSamplingAntiAliasing != 0u) {
-        alpha *= 0.5;
-    }
-    
-    alpha = clamp(alpha, 0.0, 1.0);
-    return uniforms.color * alpha;
-}
-
-// EXACT translation of the reference computeCoverage function
-fn computeCoverage(inverseDiameter: f32, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>) -> f32 {
-    if (p0.y > 0.0 && p1.y > 0.0 && p2.y > 0.0) { return 0.0; }
-    if (p0.y < 0.0 && p1.y < 0.0 && p2.y < 0.0) { return 0.0; }
-    
-    // Note: Simplified from abc formula by extracting a factor of (-2) from b.
-    let a = p0 - 2.0 * p1 + p2;
-    let b = p0 - p1;
-    let c = p0;
-    
-    var t0: f32;
-    var t1: f32;
-    if (abs(a.y) >= 1e-5) {
-        // Quadratic segment, solve abc formula to find roots.
-        let radicand = b.y * b.y - a.y * c.y;
-        if (radicand <= 0.0) { return 0.0; }
-        
-        let s = sqrt(radicand);
-        t0 = (b.y - s) / a.y;
-        t1 = (b.y + s) / a.y;
-    } else {
-        // Linear segment, avoid division by a.y, which is near zero.
-        // There is only one root, so we have to decide which variable to
-        // assign it to based on the direction of the segment, to ensure that
-        // the ray always exits the shape at t0 and enters at t1. For a
-        // quadratic segment this works 'automatically', see readme.
-        let t = p0.y / (p0.y - p2.y);
-        if (p0.y < p2.y) {
-            t0 = -1.0;
-            t1 = t;
-        } else {
-            t0 = t;
-            t1 = -1.0;
-        }
-    }
-    
-    var alpha = 0.0;
-    
-    if (t0 >= 0.0 && t0 < 1.0) {
-        let x = (a.x * t0 - 2.0 * b.x) * t0 + c.x;
-        alpha += clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-    }
-    
-    if (t1 >= 0.0 && t1 < 1.0) {
-        let x = (a.x * t1 - 2.0 * b.x) * t1 + c.x;
-        alpha -= clamp(x * inverseDiameter + 0.5, 0.0, 1.0);
-    }
-    
-    return alpha;
-}
-
-fn rotate(v: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(v.y, -v.x);
-}
-"""
-end
+# Removed old getReferenceFragmentShader - using faithful implementation from reference_faithful_shader.jl

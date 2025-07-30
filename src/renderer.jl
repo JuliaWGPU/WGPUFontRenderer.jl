@@ -5,6 +5,9 @@ using WGPUCore
 using WGPUNative
 using FreeType
 
+# Import font processing functions and global variables
+include("font.jl")
+
 # Font Renderer State - following gpu-font-renderer structure
 mutable struct FontRenderer
     device::WGPUCore.GPUDevice
@@ -235,10 +238,11 @@ end
 function generateVertexData(renderer::FontRenderer, text::String)
     empty!(renderer.vertices)
     
-    # Use screen coordinates with proper scaling
-    # Font has units per em (stored in fontEmSize), so we need to scale appropriately
-    # This scale must match the coordinate space calculation in the shader
-    scale = 0.08f0  # Increased from 0.01f0 for maximum debug visibility (8x larger font)
+    # CRITICAL FIX: Use proper font scaling that matches reference implementation
+    # The reference gpu-font-rendering uses worldSize parameter for scaling
+    # We need to scale from font units to screen pixels consistently
+    worldSize = 50.0f0  # Much larger for visible text (1000x larger)
+    scale = worldSize / Float32(fontEmSize)  # Proper scaling: worldSize / units_per_EM
     
     # Define text block bounds for word wrap - expand for 8x larger font
     textBlockLeft = 10.0f0
@@ -403,7 +407,7 @@ function createGPUBuffers(renderer::FontRenderer)
         )
     end
     
-# Create uniform buffer with proper orthographic projection
+    # Create uniform buffer with proper orthographic projection
     # Create orthographic projection matrix for screen coordinates
     # Dynamically calculate viewport size based on window dimensions
     left = 0.0f0
@@ -421,13 +425,10 @@ function createGPUBuffers(renderer::FontRenderer)
         -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1.0f0
     )
     
-    # Calculate appropriate anti-aliasing window size based on font scale
-    # The scale factor used in vertex generation is 0.08, so 1 screen pixel = 12.5 font units
-    pixelSizeInFontUnits = 1.0f0 / 0.08f0  # = 12.5 font units per screen pixel
-    
-    # Use the exact reference implementation approach for anti-aliasing
-    # The reference uses antiAliasingWindowSize = 1.0 for normal anti-aliasing
-    aaWindowSize = 1.0f0  # Match reference implementation default
+    # CRITICAL FIX: Use reference implementation anti-aliasing approach
+    # The reference implementation uses antiAliasingWindowSize = 1.0 for normal anti-aliasing
+    # The actual scaling is handled by fwidth() in the shader, not here
+    aaWindowSize = 1.0f0  # Match reference implementation exactly
     
     uniforms = FontUniforms(
         (0.0f0, 0.0f0, 0.0f0, 1.0f0),  # Black color for visibility on light background

@@ -7,6 +7,7 @@ using .CUtils
 export cStruct, ptr
 
 include("font.jl")
+include("reference_faithful_shader.jl")
 include("shaders.jl")
 include("renderer.jl")
 
