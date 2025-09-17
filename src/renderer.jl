@@ -243,6 +243,8 @@ function generateVertexData(renderer::FontRenderer, text::String)
         println("DEBUG: Generating vertices for $(length(renderer.glyphs)) glyphs")
     end
     
+    println("DEBUG: Total vertices before generation: $(length(renderer.vertices))")
+    
     # CRITICAL FIX: Use proper font scaling that matches reference implementation
     # The reference gpu-font-rendering uses worldSize parameter for scaling
     # We need to scale from font units to screen pixels consistently
@@ -347,7 +349,7 @@ function generateVertexData(renderer::FontRenderer, text::String)
                     push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, u0, v1, glyph.bufferIndex))
                     
                     # Debug output for first character
-                    if char == 'H' && length(renderer.vertices) >= 6
+                    if char == 'H'
                         println("DEBUG: 'H' glyph vertices: ($x1, $y1) to ($x2, $y2)")
                         println("DEBUG: Scale=$scale, xOffset=$xOffset, yOffset=$yOffset")
                         println("DEBUG: Glyph size: $(x2-x1) x $(y1-y2)")
@@ -372,6 +374,8 @@ function generateVertexData(renderer::FontRenderer, text::String)
             end
         end
     end
+    
+    println("DEBUG: Total vertices after generation: $(length(renderer.vertices))")
 end
 
 # Keep curves in font units (for coverage calculation)
