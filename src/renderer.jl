@@ -278,8 +278,10 @@ function generateVertexData(renderer::FontRenderer, text::String)
     
     # Split text into words for proper word wrapping
     words = split(text, ' ')
+    println("DEBUG: Split text into $(length(words)) words")
     
     for (wordIndex, word) in enumerate(words)
+        println("DEBUG: Processing word $wordIndex: '$word' (length $(length(word)))")
         # Calculate word width before placing it
         wordWidth = 0.0f0
         for char in word
@@ -304,8 +306,10 @@ function generateVertexData(renderer::FontRenderer, text::String)
         
         # Render each character in the word
         for char in word
+            println("DEBUG: Processing character '$char'")
             if haskey(glyphs, char)
                 glyph = glyphs[char]
+                println("DEBUG: Found glyph for '$char', bufferIndex=$(glyph.bufferIndex)")
                 
                 # Calculate glyph quad dimensions in screen coordinates
                 width = glyph.width * scale  
