@@ -220,6 +220,11 @@ function loadFontData(renderer::FontRenderer, text::String)
     renderer.glyphs = collect(values(glyphs))
     renderer.curves = bufferCurves
     
+    println("DEBUG: Loaded $(length(glyphs)) glyphs from global buffer")
+    for (char, glyph) in glyphs
+        println("DEBUG: Glyph '$char' -> bufferIndex=$(glyph.bufferIndex), width=$(glyph.width), height=$(glyph.height)")
+    end
+    
     # Normalize curve coordinates to UV space
     normalizeCurves(renderer, bufferGlyphs)
     
