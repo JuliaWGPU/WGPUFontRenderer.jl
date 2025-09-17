@@ -257,13 +257,13 @@ function generateVertexData(renderer::FontRenderer, text::String)
     scale = worldSize / 1000.0f0  # Use standard em size of 1000 for visibility
     println("DEBUG: worldSize=$worldSize, scale=$scale")
     
-    # Define text block bounds for word wrap - expand for 8x larger font
+    # Define text block bounds for word wrap - expand for larger font
     textBlockLeft = 10.0f0
     textBlockTop = 50.0f0
-    textBlockRight = 700.0f0  # Much wider text block for large font
-    textBlockBottom = 400.0f0  # Much taller text block for large font
-    textBlockWidth = textBlockRight - textBlockLeft  # 690 pixels
-    textBlockHeight = textBlockBottom - textBlockTop  # 350 pixels
+    textBlockRight = 750.0f0  # Wider text block for large font
+    textBlockBottom = 500.0f0  # Taller text block for large font
+    textBlockWidth = textBlockRight - textBlockLeft  # 740 pixels
+    textBlockHeight = textBlockBottom - textBlockTop  # 450 pixels
     
     # Add text block bounding box visualization (bufferIndex = -2)
     # First triangle: bottom-left, bottom-right, top-left (counter-clockwise)
@@ -277,8 +277,8 @@ function generateVertexData(renderer::FontRenderer, text::String)
     push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
     
     # Word wrap implementation - position text to be clearly visible
-    xOffset = textBlockLeft + 100.0f0   # Start with more padding
-    yOffset = textBlockTop + 200.0f0   # Position text well within viewport (more central)
+    xOffset = textBlockLeft + 50.0f0   # Start with reasonable padding
+    yOffset = textBlockTop + 50.0f0   # Position text at top of text block with padding
     lineHeight = 80.0f0  # Large line height for visibility
     
     # Split text into words for proper word wrapping
