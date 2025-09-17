@@ -238,6 +238,11 @@ end
 function generateVertexData(renderer::FontRenderer, text::String)
     empty!(renderer.vertices)
     
+    # Debug output for first few vertices
+    if !isempty(renderer.glyphs)
+        println("DEBUG: Generating vertices for $(length(renderer.glyphs)) glyphs")
+    end
+    
     # CRITICAL FIX: Use proper font scaling that matches reference implementation
     # The reference gpu-font-rendering uses worldSize parameter for scaling
     # We need to scale from font units to screen pixels consistently
@@ -340,6 +345,11 @@ function generateVertexData(renderer::FontRenderer, text::String)
                     push!(renderer.vertices, BufferVertex(x2, y1, 0.0f0, u1, v0, glyph.bufferIndex))
                     push!(renderer.vertices, BufferVertex(x2, y2, 0.0f0, u1, v1, glyph.bufferIndex))
                     push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, u0, v1, glyph.bufferIndex))
+                    
+                    # Debug output for first glyph
+                    if length(renderer.vertices) <= 6
+                        println("DEBUG: Glyph '$char' vertex at ($(x1), $(y1), 0.0) to ($(x2), $(y2), 0.0)")
+                    end
                 end
                 
                 # Advance position for next character
