@@ -68,7 +68,8 @@ function initializeRenderer(renderer::FontRenderer, surfaceFormat::Union{String,
         nothing
     )
     
-    fragmentShaderSource = Vector{UInt8}(getFragmentShader())
+    # Try binary shader to eliminate all anti-aliasing artifacts
+    fragmentShaderSource = Vector{UInt8}(getBinaryFragmentShader())
     fragmentShaderCode = WGPUCore.loadWGSL(fragmentShaderSource)
     fragmentShader = WGPUCore.createShaderModule(
         renderer.device,
