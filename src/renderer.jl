@@ -246,9 +246,9 @@ function generateVertexData(renderer::FontRenderer, text::String)
     # CRITICAL FIX: Use proper font scaling that matches reference implementation
     # The reference gpu-font-rendering uses worldSize parameter for scaling
     # We need to scale from font units to screen pixels consistently
-    worldSize = 50.0f0  # Much larger for visible text (1000x larger)
-    scale = worldSize / Float32(fontEmSize)  # Proper scaling: worldSize / units_per_EM
-    println("DEBUG: worldSize=$worldSize, fontEmSize=$fontEmSize, scale=$scale")
+    worldSize = 100.0f0  # Even larger for very visible text (2000x reference)
+    scale = worldSize / 1000.0f0  # Use standard em size of 1000 for visibility
+    println("DEBUG: worldSize=$worldSize, scale=$scale")
     
     # Define text block bounds for word wrap - expand for 8x larger font
     textBlockLeft = 10.0f0
@@ -350,6 +350,7 @@ function generateVertexData(renderer::FontRenderer, text::String)
                     if char == 'H' && length(renderer.vertices) >= 6
                         println("DEBUG: 'H' glyph vertices: ($x1, $y1) to ($x2, $y2)")
                         println("DEBUG: Scale=$scale, xOffset=$xOffset, yOffset=$yOffset")
+                        println("DEBUG: Glyph size: $(x2-x1) x $(y1-y2)")
                     end
                 end
                 
