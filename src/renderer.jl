@@ -243,6 +243,7 @@ function generateVertexData(renderer::FontRenderer, text::String)
     # We need to scale from font units to screen pixels consistently
     worldSize = 50.0f0  # Much larger for visible text (1000x larger)
     scale = worldSize / Float32(fontEmSize)  # Proper scaling: worldSize / units_per_EM
+    println("DEBUG: worldSize=$worldSize, fontEmSize=$fontEmSize, scale=$scale")
     
     # Define text block bounds for word wrap - expand for 8x larger font
     textBlockLeft = 10.0f0
@@ -264,9 +265,9 @@ function generateVertexData(renderer::FontRenderer, text::String)
     push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
     
     # Word wrap implementation - position text to be clearly visible
-    xOffset = textBlockLeft + 20.0f0   # Start with padding
-    yOffset = textBlockTop + 100.0f0   # Position text well within viewport (150px from top)
-    lineHeight = 80.0f0  # Large line height for 8x font
+    xOffset = textBlockLeft + 100.0f0   # Start with more padding
+    yOffset = textBlockTop + 200.0f0   # Position text well within viewport (more central)
+    lineHeight = 80.0f0  # Large line height for visibility
     
     # Split text into words for proper word wrapping
     words = split(text, ' ')
