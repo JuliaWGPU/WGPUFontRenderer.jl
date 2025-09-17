@@ -346,9 +346,10 @@ function generateVertexData(renderer::FontRenderer, text::String)
                     push!(renderer.vertices, BufferVertex(x2, y2, 0.0f0, u1, v1, glyph.bufferIndex))
                     push!(renderer.vertices, BufferVertex(x1, y2, 0.0f0, u0, v1, glyph.bufferIndex))
                     
-                    # Debug output for first glyph
-                    if length(renderer.vertices) <= 6
-                        println("DEBUG: Glyph '$char' vertex at ($(x1), $(y1), 0.0) to ($(x2), $(y2), 0.0)")
+                    # Debug output for first character
+                    if char == 'H' && length(renderer.vertices) >= 6
+                        println("DEBUG: 'H' glyph vertices: ($x1, $y1) to ($x2, $y2)")
+                        println("DEBUG: Scale=$scale, xOffset=$xOffset, yOffset=$yOffset")
                     end
                 end
                 
