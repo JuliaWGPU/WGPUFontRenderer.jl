@@ -298,23 +298,29 @@ function generateVertexData(renderer::FontRenderer, text::String)
         end
         
         # Check if word fits on current line
+        println("DEBUG: Word width check: xOffset=$xOffset, wordWidth=$wordWidth, textBlockRight=$textBlockRight")
         if xOffset + wordWidth > textBlockRight - 5.0f0  # Account for right padding
             # Move to next line
+            println("DEBUG: Word doesn't fit, moving to next line")
             xOffset = textBlockLeft + 5.0f0  # Reset to left margin
             yOffset += lineHeight
             
             # Check if we've exceeded the text block height
+            println("DEBUG: Height check: yOffset=$yOffset, lineHeight=$lineHeight, textBlockBottom=$textBlockBottom")
             if yOffset + lineHeight > textBlockBottom - 5.0f0
+                println("DEBUG: Exceeded text block height, breaking")
                 break  # Stop rendering if we exceed the text block bounds
             end
         end
         
         # Render each character in the word
+        println("DEBUG: Starting character processing for word '$word'")
         for char in word
             println("DEBUG: Processing character '$char'")
             if haskey(glyphs, char)
+                println("DEBUG: Found glyph for '$char'")
                 glyph = glyphs[char]
-                println("DEBUG: Found glyph for '$char', bufferIndex=$(glyph.bufferIndex)")
+                println("DEBUG: Glyph data: bufferIndex=$(glyph.bufferIndex), width=$(glyph.width), height=$(glyph.height)")
                 
                 # Calculate glyph quad dimensions in screen coordinates
                 width = glyph.width * scale  
