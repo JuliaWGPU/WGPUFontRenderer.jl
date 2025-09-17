@@ -221,8 +221,10 @@ function loadFontData(renderer::FontRenderer, text::String)
     renderer.curves = bufferCurves
     
     println("DEBUG: Loaded $(length(glyphs)) glyphs from global buffer")
-    for (char, glyph) in glyphs
-        println("DEBUG: Glyph '$char' -> bufferIndex=$(glyph.bufferIndex), width=$(glyph.width), height=$(glyph.height)")
+    println("DEBUG: Loaded $(length(bufferCurves)) curves from global buffer")
+    if !isempty(bufferCurves)
+        curve = bufferCurves[1]
+        println("DEBUG: First curve: ($(curve.x0), $(curve.y0)) -> ($(curve.x1), $(curve.y1)) -> ($(curve.x2), $(curve.y2))")
     end
     
     # Normalize curve coordinates to UV space
@@ -463,6 +465,7 @@ function createGPUBuffers(renderer::FontRenderer)
     # The reference implementation uses antiAliasingWindowSize = 1.0 for normal anti-aliasing
     # The actual scaling is handled by fwidth() in the shader, not here
     aaWindowSize = 1.0f0  # Match reference implementation exactly
+    println("DEBUG: antiAliasingWindowSize = $aaWindowSize")
     
     uniforms = FontUniforms(
         (0.0f0, 0.0f0, 0.0f0, 1.0f0),  # Black color for visibility on light background
