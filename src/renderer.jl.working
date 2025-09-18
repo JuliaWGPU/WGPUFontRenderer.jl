@@ -270,14 +270,14 @@ function generateVertexData(renderer::FontRenderer, text::String)
     
     # Add text block bounding box visualization (bufferIndex = -2)
     # First triangle: bottom-left, bottom-right, top-left (counter-clockwise)
-    push!(renderer.vertices, BufferVertex(textBlockLeft, renderer.windowHeight - textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-left
-    push!(renderer.vertices, BufferVertex(textBlockRight, renderer.windowHeight - textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-right
-    push!(renderer.vertices, BufferVertex(textBlockLeft, renderer.windowHeight - textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
+    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-left
+    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-right
+    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
     
     # Second triangle: bottom-right, top-right, top-left (counter-clockwise)
-    push!(renderer.vertices, BufferVertex(textBlockRight, renderer.windowHeight - textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-right
-    push!(renderer.vertices, BufferVertex(textBlockRight, renderer.windowHeight - textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-right
-    push!(renderer.vertices, BufferVertex(textBlockLeft, renderer.windowHeight - textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
+    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockBottom, 0.9f0, 0.0f0, 0.0f0, -2))  # Bottom-right
+    push!(renderer.vertices, BufferVertex(textBlockRight, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-right
+    push!(renderer.vertices, BufferVertex(textBlockLeft, textBlockTop, 0.9f0, 0.0f0, 0.0f0, -2))  # Top-left
     
     # Word wrap implementation - position text to be clearly visible
     xOffset = textBlockLeft + 50.0f0   # Start with reasonable padding
@@ -334,9 +334,9 @@ function generateVertexData(renderer::FontRenderer, text::String)
                 # Define quad vertices with WebGPU coordinate system
                 # WebGPU: Y increases downward, so larger Y = lower on screen
                 x1 = xOffset + bearingX
-                y1 = renderer.windowHeight - (yOffset + bearingY - height)  # Flipped Y for WebGPU  
+                y1 = yOffset + bearingY - height  # Top of glyph (smaller Y value)  
                 x2 = x1 + width
-                y2 = renderer.windowHeight - (yOffset + bearingY)           # Flipped Y for WebGPU
+                y2 = yOffset + bearingY           # Bottom of glyph (larger Y value)
                 
                 # Only generate vertices if glyph has actual dimensions
                 if width > 0.0f0 && height > 0.0f0
@@ -573,11 +573,4 @@ function renderText(renderer::FontRenderer, renderPass::WGPUCore.GPURenderPassEn
     # Draw vertices
     vertexCount = length(renderer.vertices)
     WGPUCore.draw(renderPass, vertexCount; instanceCount = 1, firstVertex = 0, firstInstance = 0)
-end
-
-# Simple layout engine function for positioning text at specific coordinates
-function setPosition(renderer::FontRenderer, text::String, x::Float32, y::Float32)
-    generateVertexData(renderer, text, x, y)
-    createGPUBuffers(renderer)
-    createBindGroup(renderer)
 end
