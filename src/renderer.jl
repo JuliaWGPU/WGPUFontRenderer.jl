@@ -334,10 +334,11 @@ function generateVertexData(renderer::FontRenderer, text::String)
                 # Define quad vertices to match reference implementation coordinate system
                 # In font space: Y increases upward, with (0,0) at baseline
                 # In screen space: Y increases downward, with (0,0) at top-left
+                # The reference implementation handles this by using the correct projection matrix
                 x1 = xOffset + bearingX
-                y1 = yOffset - bearingY + height     # Bottom of glyph in screen coordinates
+                y1 = yOffset + bearingY - height     # Top of glyph in screen coordinates  
                 x2 = x1 + width
-                y2 = yOffset - bearingY              # Top of glyph in screen coordinates
+                y2 = yOffset + bearingY              # Bottom of glyph in screen coordinates
                 
                 # Only generate vertices if glyph has actual dimensions
                 if width > 0.0f0 && height > 0.0f0
@@ -451,8 +452,8 @@ function createGPUBuffers(renderer::FontRenderer)
     # For WebGPU we need to account for the Y-axis direction difference
     left = 0.0f0
     right = renderer.windowWidth
-    top = renderer.windowHeight  # Flip for WebGPU coordinate system
-    bottom = 0.0f0               # Flip for WebGPU coordinate system
+    bottom = 0.0f0               # WebGPU Y increases downward
+    top = renderer.windowHeight  # WebGPU Y increases downward
     near = -1.0f0
     far = 1.0f0
     
@@ -460,9 +461,9 @@ function createGPUBuffers(renderer::FontRenderer)
     # This matrix maps screen coordinates to NDC correctly for WebGPU
     ortho = (
         2.0f0 / (right - left), 0.0f0, 0.0f0, 0.0f0,
-        0.0f0, 2.0f0 / (top - bottom), 0.0f0, 0.0f0,  # Flipped for WebGPU Y direction
+        0.0f0, 2.0f0 / (bottom - top), 0.0f0, 0.0f0,  # Note: (bottom - top) for WebGPU
         0.0f0, 0.0f0, -2.0f0 / (far - near), 0.0f0,
-        -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1.0f0
+        -(right + left) / (right - left), -(bottom + top) / (bottom - top), -(far + near) / (far - near), 1.0f0
     )
     
     # CRITICAL FIX: Use reference implementation anti-aliasing approach
