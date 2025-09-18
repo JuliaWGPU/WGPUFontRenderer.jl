@@ -124,9 +124,10 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
     tags = unsafe_wrap(Array, outline.tags, outline.n_points)
     points = unsafe_wrap(Array, outline.points, outline.n_points)
     
-    # Helper function to convert FT_Vector to normalized coordinates
+    # Helper function to convert FT_Vector to normalized coordinates (font units)
+    # This matches the reference implementation approach of keeping curves in font units
     function convert(v)
-        return [Float32(v.x), Float32(v.y)]
+        return [Float32(v.x) / fontEmSize, Float32(v.y) / fontEmSize]
     end
     
     # Helper function to create midpoint
@@ -136,6 +137,7 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
     
     # Helper function to create curve
     function makeCurve(p0, p1, p2)
+        # Curves are already in font units from the convert function
         return BufferCurve(p0[1], p0[2], p1[1], p1[2], p2[1], p2[2])
     end
     

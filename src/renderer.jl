@@ -331,20 +331,22 @@ function generateVertexData(renderer::FontRenderer, text::String)
                 bearingX = glyph.bearingX * scale
                 bearingY = glyph.bearingY * scale
 
-                # Define quad vertices with WebGPU coordinate system
-                # WebGPU: Y increases downward, so larger Y = lower on screen
+                # Define quad vertices to match reference implementation coordinate system
+                # In the reference implementation, Y increases upward in font space
+                # but we need to convert to WebGPU screen coordinates where Y increases downward
                 x1 = xOffset + bearingX
-                y1 = yOffset + bearingY - height  # Bottom of glyph (larger Y value)  
+                y1 = yOffset - bearingY           # Top of glyph (smaller Y value in screen coords)
                 x2 = x1 + width
-                y2 = yOffset + bearingY           # Top of glyph (smaller Y value)
+                y2 = yOffset - bearingY + height  # Bottom of glyph (larger Y value in screen coords)
                 
                 # Only generate vertices if glyph has actual dimensions
                 if width > 0.0f0 && height > 0.0f0
                     # Generate UV coordinates in font units (same coordinate space as curves)
-                    u0 = Float32(glyph.bearingX)
-                    v0 = Float32(glyph.bearingY - glyph.height)
-                    u1 = Float32(glyph.bearingX + glyph.width)
-                    v1 = Float32(glyph.bearingY)
+                    # Match reference implementation exactly - UVs should be in font coordinate space
+                    u0 = Float32(glyph.bearingX) / fontEmSize
+                    v0 = Float32(glyph.bearingY - glyph.height) / fontEmSize
+                    u1 = Float32(glyph.bearingX + glyph.width) / fontEmSize
+                    v1 = Float32(glyph.bearingY) / fontEmSize
 
                     # Draw bounding box around the text quad as a simple filled rectangle
                     # First triangle: bottom-left, bottom-right, top-left (counter-clockwise)
@@ -444,12 +446,13 @@ function createGPUBuffers(renderer::FontRenderer)
     end
     
     # Create uniform buffer with proper orthographic projection
-    # Create orthographic projection matrix for screen coordinates (WebGPU convention)
-    # WebGPU: Y increases downward, so top=0, bottom=height
+    # Create orthographic projection matrix that matches the reference implementation approach
+    # The reference uses: glm::ortho(0.0f, (float) width, 0.0f, (float) height, -1.0f, 1.0f)
+    # For WebGPU we need to account for the Y-axis direction difference
     left = 0.0f0
     right = renderer.windowWidth
-    top = 0.0f0
-    bottom = renderer.windowHeight  # WebGPU Y increases downward
+    top = renderer.windowHeight  # Flip for WebGPU coordinate system
+    bottom = 0.0f0               # Flip for WebGPU coordinate system
     near = -1.0f0
     far = 1.0f0
     
@@ -457,9 +460,9 @@ function createGPUBuffers(renderer::FontRenderer)
     # This matrix maps screen coordinates to NDC correctly for WebGPU
     ortho = (
         2.0f0 / (right - left), 0.0f0, 0.0f0, 0.0f0,
-        0.0f0, 2.0f0 / (bottom - top), 0.0f0, 0.0f0,  # Note: (bottom - top) not (top - bottom)
+        0.0f0, 2.0f0 / (top - bottom), 0.0f0, 0.0f0,  # Flipped for WebGPU Y direction
         0.0f0, 0.0f0, -2.0f0 / (far - near), 0.0f0,
-        -(right + left) / (right - left), -(bottom + top) / (bottom - top), -(far + near) / (far - near), 1.0f0
+        -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1.0f0
     )
     
     # CRITICAL FIX: Use reference implementation anti-aliasing approach
@@ -473,7 +476,7 @@ function createGPUBuffers(renderer::FontRenderer)
         (0.0f0, 0.0f0, 0.0f0, 1.0f0),  # Black color for visibility on light background
         ortho,  # Proper orthographic projection matrix
         aaWindowSize,  # Reference implementation anti-aliasing window size
-        0,      # Disable super-sampling AA to fix horizontal/vertical lines
+        1,      # Enable super-sampling AA for better quality (properly implemented now)
         (0, 0)  # Padding
     )
     
