@@ -465,7 +465,8 @@ function createGPUBuffers(renderer::FontRenderer)
     # CRITICAL FIX: Use reference implementation anti-aliasing approach
     # The reference implementation uses antiAliasingWindowSize = 1.0 for normal anti-aliasing
     # The actual scaling is handled by fwidth() in the shader, not here
-    aaWindowSize = 0.1f0  # REDUCED to minimize horizontal line artifacts
+    # With our protection against division by zero, we can use the proper reference value
+    aaWindowSize = 1.0f0  # Reference implementation value with proper protection
     println("DEBUG: antiAliasingWindowSize = $aaWindowSize")
     
     uniforms = FontUniforms(

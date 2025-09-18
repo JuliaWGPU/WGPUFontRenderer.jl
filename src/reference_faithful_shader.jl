@@ -107,9 +107,13 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     let duvdy = dpdy(input.uv);
     let fwidthUV = abs(duvdx) + abs(duvdy);
     
+    // CRITICAL FIX: Prevent division by zero or very small values that cause horizontal line artifacts
+    // Use max() to ensure we have a minimum derivative value
+    let minDerivative = max(fwidthUV, vec2<f32>(1e-6, 1e-6));
+    
     // Calculate inverse diameter exactly like reference implementation
     // This eliminates the coordinate space mismatch that causes horizontal lines
-    let inverseDiameter = 1.0 / (uniforms.antiAliasingWindowSize * fwidthUV);
+    let inverseDiameter = 1.0 / (uniforms.antiAliasingWindowSize * minDerivative);
     
     let glyph = glyphs[input.bufferIndex];
     
