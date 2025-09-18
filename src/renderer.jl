@@ -331,14 +331,12 @@ function generateVertexData(renderer::FontRenderer, text::String)
                 bearingX = glyph.bearingX * scale
                 bearingY = glyph.bearingY * scale
 
-                # Define quad vertices to match reference implementation coordinate system
-                # In font space: Y increases upward, with (0,0) at baseline
-                # In screen space: Y increases downward, with (0,0) at top-left
-                # The reference implementation handles this by using the correct projection matrix
+                # Define quad vertices with WebGPU coordinate system
+                # WebGPU: Y increases downward, so larger Y = lower on screen
                 x1 = xOffset + bearingX
-                y1 = yOffset + bearingY - height     # Top of glyph in screen coordinates  
+                y1 = yOffset + bearingY - height  # Top of glyph (smaller Y value)  
                 x2 = x1 + width
-                y2 = yOffset + bearingY              # Bottom of glyph in screen coordinates
+                y2 = yOffset + bearingY           # Bottom of glyph (larger Y value)
                 
                 # Only generate vertices if glyph has actual dimensions
                 if width > 0.0f0 && height > 0.0f0
