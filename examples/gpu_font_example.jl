@@ -199,3 +199,6 @@ end
 if abspath(PROGRAM_FILE) == @__FILE__
     run_demo()
 end
+
+# Example of custom positioning (uncomment to use):
+# setPosition(app.fontRenderer, "Custom Position", 200.0f0, 300.0f0)

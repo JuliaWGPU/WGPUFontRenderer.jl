@@ -7,7 +7,7 @@ using FreeType
 
 using WGPUCore
 
-# __precompile__(false)
+__precompile__(false)
 
 rootType(::Type{Ref{T}}) where T = T
 
@@ -60,7 +60,7 @@ glyphs = Dict()
 function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
     # bufferCurves = BufferCurve[]
     faceRec = face |> unsafe_load
-    
+
     # CRITICAL FIX: Store indices correctly for both Julia and GPU access
     # For GPU: 0-based indexing is used
     # For Julia: 1-based indexing is needed
@@ -84,7 +84,7 @@ function buildGlyph(face, curves, bufferGlyphs, charCode, glyphIdx)
     end
 
     glyphCount = UInt32((curves |> length) - glyphStartGPU)
-    
+
     # Store GPU-compatible (0-based) indices in BufferGlyph for GPU buffer
     bufferGlyph = BufferGlyph(glyphStartGPU, glyphCount)
     # CRITICAL FIX: Julia bufferGlyphs length before push is the correct 0-based index for shader
@@ -123,24 +123,24 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
 
     tags = unsafe_wrap(Array, outline.tags, outline.n_points)
     points = unsafe_wrap(Array, outline.points, outline.n_points)
-    
+
     # Helper function to convert FT_Vector to normalized coordinates (font units)
     # This matches the reference implementation approach of keeping curves in font units
     function convert(v)
         return [Float32(v.x) / fontEmSize, Float32(v.y) / fontEmSize]
     end
-    
+
     # Helper function to create midpoint
     function makeMidpoint(a, b)
         return 0.5f0 * (a .+ b)
     end
-    
+
     # Helper function to create curve
     function makeCurve(p0, p1, p2)
         # Curves are already in font units from the convert function
         return BufferCurve(p0[1], p0[2], p1[1], p1[2], p2[1], p2[2])
     end
-    
+
     # Find a point that is on the curve and remove it from the list
     local first
     firstOnCurve = (tags[firstIdx] & FT_CURVE_TAG_ON) == 1
@@ -157,16 +157,16 @@ function convertContour(bufferCurves, outline, firstIdx, lastIdx)
             # This is a virtual point, so we don't have to remove it
         end
     end
-    
+
     start = first
     control = first
     previous = first
     previousTag = FT_CURVE_TAG_ON
-    
+
     for idx in firstIdx:dIdx:lastIdx
         current = convert(points[idx])
         currentTag = tags[idx] & 0x3  # Extract the tag bits (0x3 = 11 binary)
-        
+
         if currentTag == FT_CURVE_TAG_CUBIC
             # No-op, wait for more points
             control = previous
@@ -265,7 +265,7 @@ function prepareGlyphsForText(str::String)
     empty!(bufferCurves)
     empty!(bufferGlyphs)
     empty!(glyphs)
-    
+
     ftLib = Ref{FT_Library}(C_NULL)
 
     FT_Init_FreeType(ftLib)

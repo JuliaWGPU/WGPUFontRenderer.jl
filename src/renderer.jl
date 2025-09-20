@@ -68,8 +68,8 @@ function initializeRenderer(renderer::FontRenderer, surfaceFormat::Union{String,
         nothing
     )
     
-    # Try binary shader to eliminate all anti-aliasing artifacts
-    fragmentShaderSource = Vector{UInt8}(getBinaryFragmentShader())
+    # Use the reference faithful fragment shader
+    fragmentShaderSource = Vector{UInt8}(getFragmentShader())
     fragmentShaderCode = WGPUCore.loadWGSL(fragmentShaderSource)
     fragmentShader = WGPUCore.createShaderModule(
         renderer.device,
@@ -136,6 +136,9 @@ function initializeRenderer(renderer::FontRenderer, surfaceFormat::Union{String,
         bindGroupLayoutEntries,
         dummyBindGroupEntries
     )
+    
+    # Store bind group layout for later use
+    renderer.bindGroupLayout = pipelineLayout.bindGroupLayout
     
     # Create render pipeline - following gpu-font-renderer structure
     renderPipelineOptions = [
@@ -232,7 +235,7 @@ function loadFontData(renderer::FontRenderer, text::String)
     normalizeCurves(renderer, bufferGlyphs)
     
     # Generate vertex data for rendering
-    generateVertexData(renderer, text)
+    generateVertexData(renderer, text, 10.0f0, 50.0f0)
     
     # Debug output disabled for cleaner console
     
@@ -243,7 +246,7 @@ function loadFontData(renderer::FontRenderer, text::String)
     createBindGroup(renderer)
 end
 
-function generateVertexData(renderer::FontRenderer, text::String)
+function generateVertexData(renderer::FontRenderer, text::String, xPos::Float32 = 10.0f0, yPos::Float32 = 50.0f0)
     empty!(renderer.vertices)
     
     # Debug output for first few vertices
@@ -261,10 +264,10 @@ function generateVertexData(renderer::FontRenderer, text::String)
     println("DEBUG: worldSize=$worldSize, scale=$scale")
     
     # Define text block bounds for word wrap - expand for larger font
-    textBlockLeft = 10.0f0
-    textBlockTop = 50.0f0
-    textBlockRight = 750.0f0  # Wider text block for large font
-    textBlockBottom = 500.0f0  # Taller text block for large font
+    textBlockLeft = xPos
+    textBlockTop = yPos
+    textBlockRight = textBlockLeft + 740.0f0  # Wider text block for large font
+    textBlockBottom = textBlockTop + 450.0f0  # Taller text block for large font
     textBlockWidth = textBlockRight - textBlockLeft  # 740 pixels
     textBlockHeight = textBlockBottom - textBlockTop  # 450 pixels
     
@@ -580,4 +583,16 @@ function setPosition(renderer::FontRenderer, text::String, x::Float32, y::Float3
     generateVertexData(renderer, text, x, y)
     createGPUBuffers(renderer)
     createBindGroup(renderer)
+end
+
+# Clear current vertices to prepare for new text
+function clearText(renderer::FontRenderer)
+    empty!(renderer.vertices)
+end
+
+# Add text to the current vertex buffer (for batching)
+function addText(renderer::FontRenderer, text::String, x::Float32, y::Float32)
+    # For now, we'll regenerate all vertices each time
+    # In a more advanced implementation, we'd append to existing vertices
+    generateVertexData(renderer, text, x, y)
 end
