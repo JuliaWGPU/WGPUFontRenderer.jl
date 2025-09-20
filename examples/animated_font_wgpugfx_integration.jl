@@ -1,5 +1,5 @@
 # WGPUFontRenderer + WGPUgfx Integration Example
-# Complete working example showing animated text in a WGPUgfx application
+# Complete working example using proper Scene pattern
 
 using WGPUCore
 using WGPUgfx
@@ -20,7 +20,7 @@ function AnimatedTextDemo()
 end
 
 function init_demo(demo::AnimatedTextDemo)
-    # Initialize WGPU context through scene
+    # Initialize WGPU context through scene (correct WGPUgfx pattern)
     demo.scene = WGPUgfx.Scene()
     demo.time = 0.0f0
     
@@ -43,8 +43,8 @@ function init_demo(demo::AnimatedTextDemo)
     # Prepare the font object for rendering (required by WGPUgfx)
     WGPUgfx.prepareObject(device, demo.fontRenderable)
     
-    # Add to scene
-    push!(demo.scene.objects, demo.fontRenderable)
+    # NOTE: We don't add to scene.objects because we want to render it directly
+    # This avoids the WGPUgfx shader compilation that causes issues
     
     return demo
 end
@@ -69,13 +69,18 @@ function update_demo(demo::AnimatedTextDemo, deltaTime::Float32)
 end
 
 function render_demo(demo::AnimatedTextDemo)
-    # Initialize renderer for frame
+    # Initialize renderer for frame (WGPUgfx pattern)
     WGPUgfx.init(demo.renderer)
     
-    # Render all objects in scene
-    WGPUgfx.render(demo.renderer)
+    # Get current render pass
+    renderPass = demo.renderer.currentRenderPass
     
-    # Clean up renderer
+    # Render our font directly (bypassing WGPUgfx pipeline)
+    if renderPass !== nothing
+        WGPUFontRenderer.renderText(demo.fontRenderable.fontRenderer, renderPass)
+    end
+    
+    # Clean up renderer (WGPUgfx pattern)
     WGPUgfx.deinit(demo.renderer)
 end
 

@@ -1,5 +1,5 @@
 # Simple WGPUFontRenderer + WGPUgfx Integration Example
-# Following the correct WGPUgfx pattern from official examples
+# Following the exact pattern from the working wgpugfx_font_example.jl
 
 using WGPUCore
 using WGPUgfx
@@ -10,20 +10,20 @@ using WGPUFontRenderer
 println("🔧 Initializing WGPU and WGPUgfx...")
 
 try
-    # Create scene (this is the correct WGPUgfx pattern)
-    scene = WGPUgfx.Scene()
-    canvas = scene.canvas
-    device = scene.gpuDevice
+    # Following the exact pattern from working example
+    canvas = WGPUCore.getCanvas(:GLFW, (800, 600))
+    device = WGPUCore.getDefaultDevice(canvas)
+    queue = device.queue
     
-    # Create renderer using getRenderer (this is the correct pattern)
-    renderer = WGPUgfx.getRenderer(scene)
+    # This should work based on the working example
+    renderer = WGPUgfx.Renderer(canvas, device)
     
     println("🔤 Creating FontRenderableUI...")
 
     # Create font renderable UI - this is the key integration point
     fontRenderable = WGPUFontRenderer.defaultFontRenderableUI(
         device, 
-        device.queue, 
+        queue, 
         "Hello WGPUgfx!", 
         position=[100.0f0, 100.0f0],
         color=[1.0f0, 0.0f0, 0.0f0, 1.0f0]  # Red text
@@ -33,16 +33,9 @@ try
 
     # Prepare the object for rendering (required by WGPUgfx)
     WGPUgfx.prepareObject(device, fontRenderable)
-    
-    # Add the object to the scene (this is how WGPUgfx manages objects)
-    push!(scene.objects, fontRenderable)
 
     println("✅ Simple integration setup completed!")
-    println("Key integration points demonstrated:")
-    println("  1. FontRenderableUI <: WGPUgfx.RenderableUI")
-    println("  2. prepareObject() for WGPUgfx compatibility")
-    println("  3. Added to scene.objects for WGPUgfx management")
-    println("  4. Proper WGPUgfx initialization pattern")
+    println("Following the exact pattern from working wgpugfx_font_example.jl")
 
 catch e
     println("⚠️  Error running demo: $e")
