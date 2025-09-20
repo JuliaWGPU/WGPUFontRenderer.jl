@@ -133,27 +133,6 @@ function render_frame(app::FontDemoApp)
             app.depthTextureHeight = canvasSize[2]
         end
         
-        if needsDepthTexture
-            # Create depth texture with current canvas size
-            app.depthTexture = WGPUCore.createTexture(
-                app.device,
-                "Depth Texture",
-                (canvasSize[1], canvasSize[2], 1),
-                1, 1,
-                WGPUCore.WGPUTextureDimension_2D, 
-                WGPUNative.LibWGPU.WGPUTextureFormat_Depth24Plus,
-                WGPUCore.getEnum(WGPUCore.WGPUTextureUsage, ["RenderAttachment"])
-            )
-            
-            # Create depth texture view
-            app.depthTextureView = WGPUCore.createView(app.depthTexture)
-        end
-        
-        # Update uniforms if window size changed
-        if (app.fontRenderer.windowWidth, app.fontRenderer.windowHeight) != (Float32(canvasSize[1]), Float32(canvasSize[2]))
-            updateUniforms(app.fontRenderer)
-        end
-        
         # Create render pass with depth stencil attachment
         renderPassOptions = [
             WGPUCore.GPUColorAttachments => [
