@@ -16,6 +16,8 @@ mutable struct FontDemoApp
     textToRender::String
     depthTexture::Union{WGPUCore.GPUTexture, Nothing}
     depthTextureView::Union{WGPUCore.GPUTextureView, Nothing}
+    depthTextureWidth::Int
+    depthTextureHeight::Int
     
     function FontDemoApp()
         new()
@@ -52,6 +54,8 @@ function init_app(app::FontDemoApp)
     # Initialize depth texture fields
     app.depthTexture = nothing
     app.depthTextureView = nothing
+    app.depthTextureWidth = 0
+    app.depthTextureHeight = 0
     
     return app
 end
@@ -62,7 +66,7 @@ function cleanup_app(app::FontDemoApp)
         try
             WGPUCore.destroy(app.depthTextureView)
         catch e
-            @warn "Error destroying depth texture view: $e"
+            # Ignore errors during cleanup
         end
         app.depthTextureView = nothing
     end
@@ -71,7 +75,7 @@ function cleanup_app(app::FontDemoApp)
         try
             WGPUCore.destroy(app.depthTexture)
         catch e
-            @warn "Error destroying depth texture: $e"
+            # Ignore errors during cleanup
         end
         app.depthTexture = nothing
     end
@@ -89,8 +93,27 @@ function render_frame(app::FontDemoApp)
         # Get current canvas size dynamically
         canvasSize = app.canvas.size
         
-        # Create depth texture if needed (simplified - always create for now)
-        if app.depthTexture === nothing || app.depthTextureView === nothing
+        # Update renderer window dimensions
+        app.fontRenderer.windowWidth = Float32(canvasSize[1])
+        app.fontRenderer.windowHeight = Float32(canvasSize[2])
+        
+        # Create or recreate depth texture if needed (handle window resizing)
+        needsDepthTexture = app.depthTexture === nothing || app.depthTextureView === nothing
+        if !needsDepthTexture
+            # Check if canvas size has changed using stored dimensions
+            if app.depthTextureWidth != canvasSize[1] || app.depthTextureHeight != canvasSize[2]
+                # Canvas size changed, cleanup old depth texture
+                try
+                    WGPUCore.destroy(app.depthTextureView)
+                    WGPUCore.destroy(app.depthTexture)
+                catch e
+                    # Ignore cleanup errors
+                end
+                needsDepthTexture = true
+            end
+        end
+        
+        if needsDepthTexture
             # Create depth texture with current canvas size
             app.depthTexture = WGPUCore.createTexture(
                 app.device,
@@ -104,6 +127,31 @@ function render_frame(app::FontDemoApp)
             
             # Create depth texture view
             app.depthTextureView = WGPUCore.createView(app.depthTexture)
+            
+            # Store the dimensions for future comparisons
+            app.depthTextureWidth = canvasSize[1]
+            app.depthTextureHeight = canvasSize[2]
+        end
+        
+        if needsDepthTexture
+            # Create depth texture with current canvas size
+            app.depthTexture = WGPUCore.createTexture(
+                app.device,
+                "Depth Texture",
+                (canvasSize[1], canvasSize[2], 1),
+                1, 1,
+                WGPUCore.WGPUTextureDimension_2D, 
+                WGPUNative.LibWGPU.WGPUTextureFormat_Depth24Plus,
+                WGPUCore.getEnum(WGPUCore.WGPUTextureUsage, ["RenderAttachment"])
+            )
+            
+            # Create depth texture view
+            app.depthTextureView = WGPUCore.createView(app.depthTexture)
+        end
+        
+        # Update uniforms if window size changed
+        if (app.fontRenderer.windowWidth, app.fontRenderer.windowHeight) != (Float32(canvasSize[1]), Float32(canvasSize[2]))
+            updateUniforms(app.fontRenderer)
         end
         
         # Create render pass with depth stencil attachment

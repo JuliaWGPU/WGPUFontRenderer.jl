@@ -11,11 +11,5 @@ WGPUCore = "53d714bf-0d76-4802-84b4-6cb75cca55f5"
 WGPUNative = "c14bfd16-04f9-4c2f-a915-b355584b5509"
 WGPUgfx = "02f56413-64a8-464d-a8fa-8dfc28b55f81"
 
-[sources]
-WGPUCanvas = {path = "..\\WGPUCanvas"}
-WGPUCore = {path = "..\\WGPUCore"}
-WGPUNative = {path = "C:\\Users\\arhik\\.julia\\dev\\WGPUNative"}
-WGPUgfx = {path = "C:\\Users\\arhik\\.julia\\dev\\WGPUgfx"}
-
 [compat]
 GLFW = "3.4.5"

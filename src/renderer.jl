@@ -596,3 +596,48 @@ function addText(renderer::FontRenderer, text::String, x::Float32, y::Float32)
     # In a more advanced implementation, we'd append to existing vertices
     generateVertexData(renderer, text, x, y)
 end
+
+# Update uniform buffer with new window dimensions
+function updateUniforms(renderer::FontRenderer)
+    # Create orthographic projection matrix that matches the reference implementation approach
+    # The reference uses: glm::ortho(0.0f, (float) width, 0.0f, (float) height, -1.0f, 1.0f)
+    # For WebGPU we need to account for the Y-axis direction difference
+    left = 0.0f0
+    right = renderer.windowWidth
+    bottom = 0.0f0               # WebGPU Y increases downward
+    top = renderer.windowHeight  # WebGPU Y increases downward
+    near = -1.0f0
+    far = 1.0f0
+    
+    # Column-major orthographic projection matrix (WGSL format)
+    # This matrix maps screen coordinates to NDC correctly for WebGPU
+    ortho = (
+        2.0f0 / (right - left), 0.0f0, 0.0f0, 0.0f0,
+        0.0f0, 2.0f0 / (bottom - top), 0.0f0, 0.0f0,  # Note: (bottom - top) for WebGPU
+        0.0f0, 0.0f0, -2.0f0 / (far - near), 0.0f0,
+        -(right + left) / (right - left), -(bottom + top) / (bottom - top), -(far + near) / (far - near), 1.0f0
+    )
+    
+    # CRITICAL FIX: Use reference implementation anti-aliasing approach
+    # The reference implementation uses antiAliasingWindowSize = 1.0 for normal anti-aliasing
+    # The actual scaling is handled by fwidth() in the shader, not here
+    # With our protection against division by zero, we can use the proper reference value
+    aaWindowSize = 1.0f0  # Reference implementation value with proper protection
+    
+    uniforms = FontUniforms(
+        (0.0f0, 0.0f0, 0.0f0, 1.0f0),  # Black color for visibility on light background
+        ortho,  # Proper orthographic projection matrix
+        aaWindowSize,  # Reference implementation anti-aliasing window size
+        1,      # Enable super-sampling AA for better quality (properly implemented now)
+        (0, 0)  # Padding
+    )
+    
+    uniformBytes = Vector{UInt8}(undef, sizeof(FontUniforms))
+    ptr = Ptr{FontUniforms}(pointer(uniformBytes))
+    unsafe_store!(ptr, uniforms)
+    
+    # Update the uniform buffer
+    if renderer.uniformBuffer !== nothing
+        WGPUCore.writeBuffer(renderer.device, renderer.queue, renderer.uniformBuffer, uniformBytes)
+    end
+end
