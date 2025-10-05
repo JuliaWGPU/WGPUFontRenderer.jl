@@ -37,6 +37,7 @@ function init_app(app::FontDemoApp)
     
     # Configure context
     presentContext = WGPUCore.getContext(app.canvas)
+    WGPUCore.determineSize(presentContext)  # Determine actual framebuffer size
     WGPUCore.config(presentContext; device=app.device, format=surfaceFormat)
     
     # Create font renderer - following gpu-font-renderer initialization
